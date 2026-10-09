@@ -29,10 +29,10 @@ GET https://<worker-domain>/health
 Expected shape:
 
 ```json
-{ "ok": true, "service": "live-voice-signaling", "version": "0.0.5" }
+{ "ok": true, "service": "live-voice-signaling", "version": "0.0.6" }
 ```
 
-Set Worker variable `ALLOWED_ORIGINS` to the final frontend origin. Multiple origins may be comma-separated. The checked-in default permits localhost only. Replace it with the final HTTPS frontend origin before production use.
+Same-origin Worker deployments are allowed automatically. Set Worker variable `ALLOWED_ORIGINS` only when the frontend is served from a different HTTPS origin. Multiple origins may be comma-separated. The checked-in default permits localhost development only.
 
 Optional Worker secrets for Cloudflare Realtime TURN:
 
@@ -69,7 +69,7 @@ PUBLIC_MAX_PARTICIPANTS=10
 
 If Cloudsmith is private, set `CLOUDSMITH_TOKEN` as a protected build secret. It is used at build time only and never enters the Astro client bundle.
 
-After the Pages domain is final, update Worker `ALLOWED_ORIGINS` to exactly that origin and redeploy the Worker.
+After the Pages domain is final, update Worker `ALLOWED_ORIGINS` to exactly that origin and redeploy the Worker. This is not needed when static assets and signaling share the same Worker origin.
 
 ## 4. Acceptance checks
 

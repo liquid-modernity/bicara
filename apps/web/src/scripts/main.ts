@@ -214,6 +214,11 @@ async function joinRoom(): Promise<void> {
     showError(t('secureRequired'));
     return;
   }
+  if (typeof navigator.mediaDevices?.getUserMedia !== 'function') {
+    showError(t('micMissing'));
+    setConnectionStatus('failed');
+    return;
+  }
   if (!navigator.onLine) {
     showError(t('offline'));
     return;
@@ -428,33 +433,58 @@ async function resumeRemoteAudio(): Promise<void> {
 function handlePeerConnectionState(peerId: string, state: RTCPeerConnectionState): void {
   const participant = participants.get(peerId);
   if (!participant) return;
-  participant.connectionState = state === 'connected' ? 'connected' : state === 'failed' ? 'failed' : 'reconnecting';
+  participant.connectionState = peerUiState(state);
   participants.set(peerId, participant);
   renderParticipants();
 
+  gaga.emit('gaga:peer-connection-state', { peerId, state });
+
   if (state === 'connected') {
+    const timer = peerRecoveryTimers.get(peerId);
+    if (timer) window.clearTimeout(timer);
+    peerRecoveryTimers.delete(peerId);
+    gaga.emit('gaga:peer-connected', { peerId });
+    return;
+  }
+
+  if (state === 'closed') {
     const timer = peerRecoveryTimers.get(peerId);
     if (timer) window.clearTimeout(timer);
     peerRecoveryTimers.delete(peerId);
     return;
   }
 
-  // Only one deterministic side initiates recovery, preventing offer glare.
-  if (state === 'failed' && participantId.localeCompare(peerId) < 0 && !peerRecoveryTimers.has(peerId)) {
-    const timer = window.setTimeout(() => {
-      peerRecoveryTimers.delete(peerId);
-      void recoverPeer(peerId);
-    }, 750);
-    peerRecoveryTimers.set(peerId, timer);
-  }
+  if (state === 'disconnected') schedulePeerRecovery(peerId, 2_500, 'disconnected');
+  if (state === 'failed') schedulePeerRecovery(peerId, 750, 'failed');
 }
 
-async function recoverPeer(peerId: string): Promise<void> {
+function peerUiState(state: RTCPeerConnectionState): Participant['connectionState'] {
+  if (state === 'connected') return 'connected';
+  if (state === 'failed') return 'failed';
+  if (state === 'closed') return 'closed';
+  return 'reconnecting';
+}
+
+function schedulePeerRecovery(peerId: string, delayMs: number, reason: 'disconnected' | 'failed'): void {
+  // Only one deterministic side initiates recovery, preventing offer glare.
+  if (participantId.localeCompare(peerId) >= 0 || peerRecoveryTimers.has(peerId)) return;
+  gaga.emit('gaga:peer-recovery-scheduled', { peerId, reason, delayMs });
+  const timer = window.setTimeout(() => {
+    peerRecoveryTimers.delete(peerId);
+    void recoverPeer(peerId, reason);
+  }, delayMs);
+  peerRecoveryTimers.set(peerId, timer);
+}
+
+async function recoverPeer(peerId: string, reason: string): Promise<void> {
   try {
     const offer = await mesh?.createOffer(peerId, true);
-    if (offer) signaling.send({ type: 'signal.offer', targetId: peerId, payload: offer });
+    if (offer) {
+      signaling.send({ type: 'signal.offer', targetId: peerId, payload: offer });
+      gaga.emit('gaga:peer-recovery-started', { peerId, reason });
+    }
   } catch {
-    // A later signaling reconnect will retry negotiation with the current room roster.
+    gaga.emit('gaga:peer-recovery-failed', { peerId, reason });
   }
 }
 

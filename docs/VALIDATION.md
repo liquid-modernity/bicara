@@ -16,6 +16,16 @@ CI executes the same gates on `main` and pull requests. On the first networked i
 
 ## Deployed acceptance tests
 
+| Check | Result | Notes |
+| --- | --- | --- |
+| Desktop Chrome joins room | FAIL until manually verified | Requires deployed HTTPS browser test. |
+| Mobile Chrome joins same room | FAIL until manually verified | Requires deployed HTTPS Android Chrome test. |
+| Two participants appear in same room | FAIL until manually verified | Verify Durable Object presence and UI roster. |
+| Same-room signaling exchange | FAIL until manually verified | Verify welcome, joined, offer, answer, and ICE messages. |
+| Audio connection reaches connected state | FAIL until manually verified | Verify `RTCPeerConnection` connected and audible remote stream. |
+| Reconnect after network interruption | FAIL until manually verified | Verify WebSocket reconnect and deterministic ICE restart. |
+| Cloudflare deployment | FAIL until CI/deploy confirms | Verify Worker dry-run/deploy and static asset serving. |
+
 1. Join one room from two browsers and confirm bidirectional audio.
 2. Verify offer, answer, ICE, participant presence, leave, and rejoin.
 3. Verify open-mic mute/unmute.

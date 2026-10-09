@@ -41,14 +41,19 @@ for (const forbidden of ['RTCSessionDescriptionInit', 'RTCIceCandidateInit', 'RT
 }
 
 const workerConfig = fs.readFileSync(path.join(root, 'workers/signaling/wrangler.jsonc'), 'utf8');
-if (!workerConfig.includes('https://bicara.ratriatra.workers.dev')) {
-  throw new Error('Production Worker origin must be allowed for signaling.');
+if (!workerConfig.includes('http://localhost:4321') || !workerConfig.includes('http://127.0.0.1:4321')) {
+  throw new Error('Worker config must preserve localhost signaling origins for development.');
 }
+if (/https:\/\/[a-z0-9.-]+\.workers\.dev/i.test(workerConfig)) throw new Error('Worker config must not hardcode a production workers.dev origin.');
 
 const webRuntime = fs.readFileSync(path.join(root, 'apps/web/src/scripts/main.ts'), 'utf8');
 if (!webRuntime.includes('window.location.origin')) {
   throw new Error('Frontend must default to same-origin signaling outside localhost.');
 }
+if (!webRuntime.includes('gaga:peer-recovery-scheduled')) throw new Error('WebRTC recovery diagnostics must be emitted through GAGA.');
+
+const serviceWorker = fs.readFileSync(path.join(root, 'apps/web/public/sw.js'), 'utf8');
+if (!serviceWorker.includes("live-voice-v0.0.6")) throw new Error('Service worker cache version must match release 0.0.6.');
 
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
 if (/cache:\s*pnpm/.test(workflow)) throw new Error('CI must not enable pnpm cache before a real lockfile is committed.');
@@ -90,6 +95,11 @@ for (const relative of ['apps/web/src/scripts/main.ts', 'workers/signaling/src/i
   if (/\bTODO\b|placeholder implementation|echo WebSocket/i.test(source)) {
     throw new Error(`Unresolved implementation marker found in ${relative}`);
   }
+}
+
+for (const relative of ['README.md', 'docs/DEPLOYMENT.md', 'docs/RELEASE_VERIFICATION.md', 'apps/web/public/sw.js']) {
+  const source = fs.readFileSync(path.join(root, relative), 'utf8');
+  if (source.includes('0.0.5')) throw new Error(`Stale 0.0.5 release reference found in ${relative}`);
 }
 
 console.log('Static repository verification passed.');

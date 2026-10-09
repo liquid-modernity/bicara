@@ -14,9 +14,23 @@ Guest-first browser-native realtime voice rooms built from the supplied Live Voi
 
 ## Architecture
 
+```text
+Browser
+  |
+  v
+GAGA Runtime Layer
+  |
+  v
+Live Voice Application
+  |
+  +--> WebRTC Transport
+  |
+  +--> Cloudflare Signaling
+```
+
 Audio never passes through the signaling Worker. The Worker coordinates room presence and targeted WebRTC offer, answer, and ICE messages. Every room maps to one Durable Object, using the WebSocket Hibernation API so signaling state can remain coordinated without pinning a Worker instance in memory.
 
-Live Voice retains ownership of room identity, WebRTC policy, visual design, routes, UX, signaling behavior, and deployment. GAGA Engine is isolated behind `packages/gaga-bridge`, where the app consumes public GAGA subpaths for capability contracts, diagnostics, and browser runtime lifecycle cleanup. WebRTC remains the media transport; GAGA does not carry audio, SDP, or ICE.
+GAGA exists as the reusable runtime layer for capability discovery, diagnostics, shared contracts, and cleanup lifecycle. Live Voice owns room identity, participant model, visual design, routes, UX, voice policy, and deployment. WebRTC owns media transport, SDP, ICE, and peer connection state. The Cloudflare Worker owns signaling authority only; it never carries audio.
 
 ## GAGA bootstrap
 
@@ -71,7 +85,7 @@ Use the repository root for the build context.
 - Deploy command: `pnpm --filter @live-voice/signaling-worker deploy`
 - Configuration: `workers/signaling/wrangler.jsonc`
 
-After deployment, verify `https://<worker-domain>/health`. Then set Worker variable `ALLOWED_ORIGINS` to the final frontend origin, for example `https://voice.example.com`.
+After deployment, verify `https://<worker-domain>/health`. Same-origin Worker deployments work without a production hostname in config. Set Worker variable `ALLOWED_ORIGINS` only when the frontend is served from a separate origin, for example `https://voice.example.com`.
 
 ### Astro frontend on Cloudflare Pages
 
@@ -108,7 +122,7 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - mute and unmute
 - participant presence and speaking state
 - WebSocket signaling reconnect with exponential backoff
-- deterministic WebRTC ICE restart after failed peer connectivity
+- deterministic WebRTC ICE restart after disconnected or failed peer connectivity
 - ICE candidate queueing before remote descriptions
 - selectable audio output where `setSinkId()` is supported
 - remote audio autoplay recovery button
