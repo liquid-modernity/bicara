@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@gaga/engine": "file:../../vendor/gaga-0.1.6.tgz"
+    "@gaga/engine": "0.1.6",
+    "@gaga/engine-web": "0.1.6"
   },
   "devDependencies": {
     "typescript": "5.9.3"

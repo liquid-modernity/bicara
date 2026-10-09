@@ -1,4 +1,4 @@
-# Live Voice v0.0.5
+# Live Voice v0.0.6
 
 Guest-first browser-native realtime voice rooms built from the supplied Live Voice PRD, TAD, UX, API, repository, and milestone materials.
 
@@ -6,7 +6,7 @@ Guest-first browser-native realtime voice rooms built from the supplied Live Voi
 
 - Astro 7.3.8 static frontend
 - TypeScript strict mode and SCSS
-- GAGA Engine 0.1.6 resolved from the Cloudsmith `gaga/gaga` npm registry
+- GAGA Engine 0.1.6 shared kernel and GAGA Engine Web 0.1.6 browser runtime from the Cloudsmith `gaga/gaga` npm registry
 - WebRTC mesh audio for small rooms
 - Cloudflare Worker and Durable Object WebSocket signaling
 - Cloudflare STUN by default, optional Cloudflare Realtime TURN credentials
@@ -16,7 +16,7 @@ Guest-first browser-native realtime voice rooms built from the supplied Live Voi
 
 Audio never passes through the signaling Worker. The Worker coordinates room presence and targeted WebRTC offer, answer, and ICE messages. Every room maps to one Durable Object, using the WebSocket Hibernation API so signaling state can remain coordinated without pinning a Worker instance in memory.
 
-Live Voice retains ownership of the voice domain, WebRTC policy, room behavior, UI, workflow, and deployment. GAGA Engine is isolated behind `packages/gaga-bridge`, matching the boundary in the supplied requirements. Because the supplied archive does not define GAGA 0.1.6's callable API surface, the application deliberately does not invent undocumented GAGA methods. The bridge loads the exact engine artifact and centralizes GAGA-compatible lifecycle events.
+Live Voice retains ownership of room identity, WebRTC policy, visual design, routes, UX, signaling behavior, and deployment. GAGA Engine is isolated behind `packages/gaga-bridge`, where the app consumes public GAGA subpaths for capability contracts, diagnostics, and browser runtime lifecycle cleanup. WebRTC remains the media transport; GAGA does not carry audio, SDP, or ICE.
 
 ## GAGA bootstrap
 
@@ -26,7 +26,7 @@ Before workspace installation, run:
 node scripts/bootstrap-gaga.mjs
 ```
 
-The bootstrap queries `https://npm.cloudsmith.io/gaga/gaga/`, selects package `@gaga/engine` version `0.1.6`, downloads the registry-provided `dist.tarball`, and verifies npm integrity metadata when available. The fetched artifact is stored as `vendor/gaga-0.1.6.tgz` and is intentionally ignored by Git.
+The bootstrap queries `https://npm.cloudsmith.io/gaga/gaga/`, selects package `@gaga/engine` version `0.1.6`, downloads the registry-provided `dist.tarball`, and verifies npm integrity metadata when available. The fetched artifact is stored as `vendor/gaga-0.1.6.tgz` and is intentionally ignored by Git. The application dependency graph consumes exact registry packages: `@gaga/engine@0.1.6` and `@gaga/engine-web@0.1.6`.
 
 If the repository is private, expose `CLOUDSMITH_TOKEN` only as a local, GitHub, or Cloudflare build secret. Do not commit it. `GAGA_PACKAGE_NAME` remains available as an explicit bootstrap override. `GAGA_NPM_REGISTRY` can override the registry endpoint if required.
 
@@ -115,6 +115,9 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - aggregate RTT and packet-loss quality indicator
 - server-side room capacity enforcement, default 10
 - runtime-neutral signaling protocol shared between browser and Worker
+- GAGA capability inspection for the Live Voice browser-room capability
+- GAGA diagnostics for app lifecycle events
+- GAGA browser lifecycle cleanup for long-lived frontend subscriptions
 - bounded server-side validation for SDP and ICE signaling payloads
 - persistent local language, mode, name, and audio-output preferences
 - installable PWA shell with network-aware offline state

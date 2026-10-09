@@ -2,21 +2,26 @@
 
 Cloudsmith repository: workspace `gaga`, repository `gaga`. Native npm registry endpoint: `https://npm.cloudsmith.io/gaga/gaga/`.
 
-The repository uses `scripts/bootstrap-gaga.mjs` instead of hard-coding a guessed package tarball URL. The script requests npm metadata for `@gaga/engine@0.1.6`, follows the registry-provided `dist.tarball`, validates `dist.integrity` or the legacy `dist.shasum` when present, and writes the verified package to `vendor/gaga-0.1.6.tgz`. `@live-voice/gaga-bridge` consumes that exact local artifact.
+The repository uses `scripts/bootstrap-gaga.mjs` to verify the canonical `@gaga/engine@0.1.6` artifact. The script requests npm metadata, follows the registry-provided `dist.tarball`, validates `dist.integrity` or the legacy `dist.shasum` when present, and writes the verified package to `vendor/gaga-0.1.6.tgz` as release evidence.
+
+Application code consumes exact registry dependencies:
+
+```text
+@gaga/engine@0.1.6
+@gaga/engine-web@0.1.6
+```
 
 For a private Cloudsmith repository, supply `CLOUDSMITH_TOKEN` as a build secret. The token is never exposed to browser code.
 
-The supplied Live Voice requirements establish Live Voice as an independent product consumer. GAGA may provide applicable reusable mechanics, while Live Voice retains ownership of product identity, voice-domain logic, WebRTC behavior, room behavior, visual expression, workflow, and deployment.
+The Live Voice product is an independent GAGA consumer. GAGA provides reusable contracts and browser primitives; Live Voice owns product identity, voice-domain policy, WebRTC behavior, room behavior, visual expression, workflow, and deployment.
 
-The supplied archive does not define GAGA Engine 0.1.6's callable API contract. To avoid fabricating unsupported methods, `@live-voice/gaga-bridge` intentionally performs a narrow integration:
+`@live-voice/gaga-bridge` is the only package that imports GAGA. It uses public, explicit GAGA subpaths:
 
-1. load the verified GAGA Engine 0.1.6 artifact;
-2. expose its module namespace through one boundary package;
-3. emit `gaga:engine-ready` with the resolved export names;
-4. centralize all product `gaga:*` lifecycle events;
-5. prevent engine-specific APIs from leaking into WebRTC and room-domain packages.
+1. `@gaga/engine/capabilities` defines and inspects the Live Voice browser-room capability;
+2. `@gaga/engine/diagnostics` emits sanitized lifecycle diagnostics;
+3. `@gaga/engine-web/runtime/lifecycle` owns cleanup registration for long-lived frontend subscriptions.
 
-When an authoritative GAGA 0.1.6 API contract is available, capability adapters can be implemented inside `packages/gaga-bridge` without changing the product-domain interfaces.
+The bridge deliberately avoids the internal `@gaga/engine` and `@gaga/engine-web` package roots. WebRTC, Durable Object signaling, room roster policy, labels, routes, and UI state remain Live Voice responsibilities.
 
 
 ## Release artifact pin

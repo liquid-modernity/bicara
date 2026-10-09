@@ -1,4 +1,4 @@
-import { emitGagaEvent, initializeGagaBoundary } from '@live-voice/gaga-bridge';
+import { initializeGagaRuntime } from '@live-voice/gaga-bridge';
 import { MeshPeerManager, VoiceEngine } from '@live-voice/rtc-core';
 import type {
   ConnectionQuality,
@@ -75,7 +75,14 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
-initializeGagaBoundary();
+const gaga = initializeGagaRuntime({
+  applicationId: 'live-voice',
+  config: {
+    defaultRoom: DEFAULT_ROOM,
+    maxParticipants: MAX_PARTICIPANTS,
+    supportedModes: ['open-mic', 'push-to-talk']
+  }
+});
 setupInitialState();
 setupEvents();
 registerServiceWorker();
@@ -114,7 +121,7 @@ function setupEvents(): void {
     localStorage.setItem('live-voice-mode', mode);
     if (mode === 'push-to-talk') setMuted(true);
     renderControls();
-    emitGagaEvent('gaga:voice-mode-changed', { mode });
+    gaga.emit('gaga:voice-mode-changed', { mode });
   });
 
   localeSelect.addEventListener('change', () => {
@@ -157,19 +164,19 @@ function setupEvents(): void {
     endPtt(event);
   });
 
-  signaling.onState((state) => {
+  gaga.lifecycle.use(signaling.onState((state) => {
     if (state === 'connecting') setConnectionStatus('connecting');
     if (state === 'reconnecting') setConnectionStatus('reconnecting');
     if (state === 'failed') {
       setConnectionStatus('failed');
       showError(t('genericError'));
     }
-  });
-  signaling.onMessage((message) => {
+  }));
+  gaga.lifecycle.use(signaling.onMessage((message) => {
     void handleSignal(message).catch(() => {
       showError(t('genericError'));
     });
-  });
+  }));
 
   window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault();
@@ -184,7 +191,10 @@ function setupEvents(): void {
 
   window.addEventListener('online', updateOnlineState);
   window.addEventListener('offline', updateOnlineState);
-  window.addEventListener('beforeunload', () => leaveRoom(false));
+  window.addEventListener('beforeunload', () => {
+    leaveRoom(false);
+    gaga.destroy();
+  });
 }
 
 async function joinRoom(): Promise<void> {
@@ -250,7 +260,7 @@ async function joinRoom(): Promise<void> {
     roomTitle.textContent = roomId;
     updateUrlRoom(roomId);
     startQualityMonitor();
-    emitGagaEvent('gaga:room-join-requested', { roomId, participantId });
+    gaga.emit('gaga:room-join-requested', { roomId, participantId });
     render();
   } catch (error) {
     joinButton.disabled = false;
@@ -279,7 +289,7 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
         const offer = await mesh?.createOffer(participant.id, true);
         if (offer) signaling.send({ type: 'signal.offer', targetId: participant.id, payload: offer });
       }
-      emitGagaEvent('gaga:room-joined', { roomId, participantId, participantCount: participants.size });
+      gaga.emit('gaga:room-joined', { roomId, participantId, participantCount: participants.size });
       render();
       break;
     }
@@ -345,7 +355,7 @@ function leaveRoom(updateUi = true): void {
     joinButton.textContent = t('join');
     setConnectionStatus('closed');
     nameInput.focus();
-    emitGagaEvent('gaga:room-left', { roomId, participantId });
+    gaga.emit('gaga:room-left', { roomId, participantId });
     render();
   }
 }
@@ -356,7 +366,7 @@ function setMuted(nextMuted: boolean): void {
   if (muted && speaking) speaking = false;
   updateLocalParticipant();
   signaling.send({ type: 'participant.update', payload: { muted, speaking } });
-  emitGagaEvent(muted ? 'gaga:voice-muted' : 'gaga:voice-unmuted', { participantId });
+  gaga.emit(muted ? 'gaga:voice-muted' : 'gaga:voice-unmuted', { participantId });
   renderControls();
   renderParticipants();
 }

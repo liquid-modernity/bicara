@@ -70,7 +70,14 @@ if (!Array.isArray(manifest.icons) || manifest.icons.length < 2) throw new Error
 
 const gagaPackage = JSON.parse(fs.readFileSync(path.join(root, 'packages/gaga-bridge/package.json'), 'utf8'));
 const gagaDependency = gagaPackage.dependencies?.['@gaga/engine'] ?? '';
-if (gagaDependency !== 'file:../../vendor/gaga-0.1.6.tgz') throw new Error('GAGA Engine must remain pinned as @gaga/engine to the verified 0.1.6 vendor artifact.');
+if (gagaDependency !== '0.1.6') throw new Error('GAGA Engine must be consumed as an exact @gaga/engine@0.1.6 shared-kernel dependency.');
+if (gagaPackage.dependencies?.['@gaga/engine-web'] !== '0.1.6') throw new Error('GAGA browser runtime must be consumed as exact @gaga/engine-web@0.1.6.');
+
+const gagaBridge = fs.readFileSync(path.join(root, 'packages/gaga-bridge/src/index.ts'), 'utf8');
+if (gagaBridge.includes("from '@gaga/engine'")) throw new Error('GAGA bridge must not import the internal @gaga/engine package root.');
+for (const expected of ["from '@gaga/engine/capabilities'", "from '@gaga/engine/diagnostics'", "from '@gaga/engine-web/runtime/lifecycle'"]) {
+  if (!gagaBridge.includes(expected)) throw new Error(`GAGA bridge must use public GAGA contract subpath: ${expected}`);
+}
 
 const bootstrap = fs.readFileSync(path.join(root, 'scripts/bootstrap-gaga.mjs'), 'utf8');
 if (!bootstrap.includes('https://npm.cloudsmith.io/gaga/gaga/')) throw new Error('GAGA Cloudsmith registry endpoint is incorrect.');
