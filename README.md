@@ -1,4 +1,4 @@
-# Live Voice v0.0.4
+# Live Voice v0.0.5
 
 Guest-first browser-native realtime voice rooms built from the supplied Live Voice PRD, TAD, UX, API, repository, and milestone materials.
 
@@ -114,6 +114,8 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - remote audio autoplay recovery button
 - aggregate RTT and packet-loss quality indicator
 - server-side room capacity enforcement, default 10
+- runtime-neutral signaling protocol shared between browser and Worker
+- bounded server-side validation for SDP and ICE signaling payloads
 - persistent local language, mode, name, and audio-output preferences
 - installable PWA shell with network-aware offline state
 - Indonesian and English interface

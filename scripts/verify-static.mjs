@@ -25,9 +25,19 @@ for (const relative of required) {
 
 
 const rootPackage = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-if (rootPackage.version !== '0.0.4') throw new Error('Release version must be 0.0.4.');
+if (rootPackage.version !== '0.0.5') throw new Error('Release version must be 0.0.5.');
 if (rootPackage.packageManager !== 'pnpm@12.11.0') throw new Error('pnpm version drift detected.');
 if (rootPackage.engines?.node !== '>=22.19.0') throw new Error('Node engine floor must satisfy GAGA Engine 0.1.6.');
+
+const sharedTypes = fs.readFileSync(path.join(root, 'packages/shared-types/src/index.ts'), 'utf8');
+for (const forbidden of ['RTCSessionDescriptionInit', 'RTCIceCandidateInit', 'RTCIceServer']) {
+  if (sharedTypes.includes(forbidden)) throw new Error(`Shared wire protocol must remain runtime-neutral; found browser DOM type: ${forbidden}`);
+}
+const workerSource = fs.readFileSync(path.join(root, 'workers/signaling/src/index.ts'), 'utf8');
+if (!workerSource.includes("from '@live-voice/shared-types'")) throw new Error('Worker must consume the shared runtime-neutral signaling protocol.');
+for (const forbidden of ['RTCSessionDescriptionInit', 'RTCIceCandidateInit', 'RTCIceServer']) {
+  if (workerSource.includes(forbidden)) throw new Error(`Worker source must not depend on browser DOM WebRTC types: ${forbidden}`);
+}
 
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
 if (/cache:\s*pnpm/.test(workflow)) throw new Error('CI must not enable pnpm cache before a real lockfile is committed.');

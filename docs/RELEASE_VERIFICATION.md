@@ -1,7 +1,9 @@
-# Release Verification: Live Voice v0.0.4
+# Release Verification: Live Voice v0.0.5
 
 ## Local release gates completed
 
+- Signaling wire contracts are runtime-neutral JSON types; Cloudflare Worker code no longer depends on browser-only WebRTC DOM declarations.
+- Signaling payload validation covers target identifiers, SDP type/size, ICE candidate shape/size, participant updates, and ping timestamps.
 - JSON parsing for repository JSON files.
 - YAML parsing for `pnpm-workspace.yaml` and GitHub Actions workflow.
 - TypeScript strict validation for browser/client code and all internal workspace packages.

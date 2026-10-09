@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import type { ClientSignalMessage, SignalingParticipant } from '@live-voice/shared-types';
 
 interface Env {
   ROOMS: DurableObjectNamespace<VoiceRoom>;
@@ -18,13 +19,7 @@ interface SocketAttachment {
   joinedAt: number;
 }
 
-type ClientMessage =
-  | { type: 'signal.offer'; targetId: string; payload: RTCSessionDescriptionInit }
-  | { type: 'signal.answer'; targetId: string; payload: RTCSessionDescriptionInit }
-  | { type: 'signal.ice'; targetId: string; payload: RTCIceCandidateInit }
-  | { type: 'participant.update'; payload: { muted?: boolean; speaking?: boolean } }
-  | { type: 'room.leave' }
-  | { type: 'ping'; payload?: { at: number } };
+type ClientMessage = ClientSignalMessage;
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
 const MAX_MESSAGE_BYTES = 96 * 1024;
@@ -39,7 +34,7 @@ export default {
     }
 
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.4' }, { headers: cors });
+      return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.5' }, { headers: cors });
     }
 
     if (url.pathname === '/turn') {
@@ -231,7 +226,7 @@ export class VoiceRoom extends DurableObject<Env> {
   }
 }
 
-function publicParticipant(attachment: SocketAttachment) {
+function publicParticipant(attachment: SocketAttachment): SignalingParticipant {
   return {
     id: attachment.participantId,
     displayName: attachment.displayName,
@@ -254,15 +249,55 @@ function safeSend(socket: WebSocket, payload: unknown): void {
 }
 
 function isClientMessage(value: unknown): value is ClientMessage {
-  if (!value || typeof value !== 'object') return false;
-  const message = value as Record<string, unknown>;
-  if (typeof message.type !== 'string') return false;
-  if (message.type === 'ping' || message.type === 'room.leave') return true;
-  if (message.type === 'participant.update') return Boolean(message.payload && typeof message.payload === 'object');
-  if (message.type === 'signal.offer' || message.type === 'signal.answer' || message.type === 'signal.ice') {
-    return typeof message.targetId === 'string' && Boolean(message.payload && typeof message.payload === 'object');
+  if (!isRecord(value) || typeof value.type !== 'string') return false;
+
+  switch (value.type) {
+    case 'room.leave':
+      return true;
+    case 'ping':
+      return value.payload === undefined
+        || (isRecord(value.payload) && typeof value.payload.at === 'number' && Number.isFinite(value.payload.at));
+    case 'participant.update':
+      return isParticipantUpdate(value.payload);
+    case 'signal.offer':
+      return isTargetId(value.targetId) && isSessionDescription(value.payload, 'offer');
+    case 'signal.answer':
+      return isTargetId(value.targetId) && isSessionDescription(value.payload, 'answer');
+    case 'signal.ice':
+      return isTargetId(value.targetId) && isIceCandidate(value.payload);
+    default:
+      return false;
   }
-  return false;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isTargetId(value: unknown): value is string {
+  return typeof value === 'string' && normalizeParticipantId(value) === value;
+}
+
+function isParticipantUpdate(value: unknown): value is { muted?: boolean; speaking?: boolean } {
+  if (!isRecord(value)) return false;
+  const mutedValid = value.muted === undefined || typeof value.muted === 'boolean';
+  const speakingValid = value.speaking === undefined || typeof value.speaking === 'boolean';
+  return mutedValid && speakingValid && (typeof value.muted === 'boolean' || typeof value.speaking === 'boolean');
+}
+
+function isSessionDescription(value: unknown, expectedType: 'offer' | 'answer'): boolean {
+  if (!isRecord(value) || value.type !== expectedType) return false;
+  return typeof value.sdp === 'string' && value.sdp.length > 0 && value.sdp.length <= 64 * 1024;
+}
+
+function isIceCandidate(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.candidate !== 'string' || value.candidate.length > 8192) return false;
+  if (value.sdpMid !== undefined && value.sdpMid !== null && (typeof value.sdpMid !== 'string' || value.sdpMid.length > 256)) return false;
+  if (value.sdpMLineIndex !== undefined && value.sdpMLineIndex !== null
+      && (!Number.isInteger(value.sdpMLineIndex) || (value.sdpMLineIndex as number) < 0 || (value.sdpMLineIndex as number) > 65535)) return false;
+  if (value.usernameFragment !== undefined && value.usernameFragment !== null
+      && (typeof value.usernameFragment !== 'string' || value.usernameFragment.length > 256)) return false;
+  return true;
 }
 
 async function turnConfiguration(env: Env, headers: HeadersInit): Promise<Response> {
