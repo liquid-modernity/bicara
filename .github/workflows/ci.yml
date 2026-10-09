@@ -11,19 +11,41 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
-          version: 12.11.0
-      - uses: actions/setup-node@v4
+          version: 10.18.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node scripts/bootstrap-gaga.mjs
+          cache: pnpm
+
+      - name: Bootstrap GAGA Engine
+        run: node scripts/bootstrap-gaga.mjs
         env:
           CLOUDSMITH_TOKEN: ${{ secrets.CLOUDSMITH_TOKEN }}
-      - run: pnpm approve-builds --global || true
-      - run: pnpm install --no-frozen-lockfile --config.ignore-scripts=false
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm verify:static
+
+      - name: Install dependencies
+        run: |
+          pnpm config set ignore-scripts false
+          pnpm install --no-frozen-lockfile
+
+      - name: Approve dependency builds
+        run: |
+          pnpm approve-builds || true
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Static verification
+        run: pnpm verify:static
