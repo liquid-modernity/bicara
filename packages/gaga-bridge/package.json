@@ -1,6 +1,6 @@
 {
   "name": "@live-voice/gaga-bridge",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "gaga": "file:../../vendor/gaga-0.1.6.tgz"
+    "@gaga/engine": "file:../../vendor/gaga-0.1.6.tgz"
   },
   "devDependencies": {
     "typescript": "5.9.3"

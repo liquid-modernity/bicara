@@ -4,9 +4,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js 22+ is required."
+  echo "Node.js 22.19.0+ is required."
   exit 1
 fi
+node scripts/check-node.mjs
 
 corepack enable >/dev/null 2>&1 || true
 node scripts/bootstrap-gaga.mjs

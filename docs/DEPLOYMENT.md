@@ -29,7 +29,7 @@ GET https://<worker-domain>/health
 Expected shape:
 
 ```json
-{ "ok": true, "service": "live-voice-signaling", "version": "0.0.2" }
+{ "ok": true, "service": "live-voice-signaling", "version": "0.0.4" }
 ```
 
 Set Worker variable `ALLOWED_ORIGINS` to the final frontend origin. Multiple origins may be comma-separated. The checked-in default permits localhost only. Replace it with the final HTTPS frontend origin before production use.

@@ -5,6 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const VERSION = '0.1.6';
+const EXPECTED_SHA256 = '5146d7755ce0812f3559f3908d36c4365eb655ac10900d64c40d18aa61731ae2';
 const PACKAGE_NAME = process.env.GAGA_PACKAGE_NAME?.trim() || '@gaga/engine';
 const REGISTRY = ensureTrailingSlash(
   process.env.GAGA_NPM_REGISTRY?.trim() ||
@@ -35,6 +36,10 @@ if (!response.ok) {
 }
 
 const bytes = Buffer.from(await response.arrayBuffer());
+const actualSha256 = createHash('sha256').update(bytes).digest('hex');
+if (!timingSafeStringEqual(actualSha256, EXPECTED_SHA256)) {
+  throw new Error('GAGA Engine 0.1.6 SHA-256 does not match the verified release artifact.');
+}
 if (bytes.length < 64 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
   throw new Error('GAGA Engine download was not a valid gzip tarball.');
 }
@@ -100,7 +105,9 @@ function timingSafeStringEqual(left, right) {
 async function isUsableTarball(file) {
   try {
     const bytes = await readFile(file);
-    return bytes.length >= 64 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+    if (bytes.length < 64 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) return false;
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    return timingSafeStringEqual(sha256, EXPECTED_SHA256);
   } catch {
     await rm(file, { force: true });
     return false;

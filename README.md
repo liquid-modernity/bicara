@@ -1,4 +1,4 @@
-# Live Voice v0.0.2
+# Live Voice v0.0.4
 
 Guest-first browser-native realtime voice rooms built from the supplied Live Voice PRD, TAD, UX, API, repository, and milestone materials.
 
@@ -26,13 +26,13 @@ Before workspace installation, run:
 node scripts/bootstrap-gaga.mjs
 ```
 
-The bootstrap queries `https://npm.cloudsmith.io/gaga/gaga/`, selects package `gaga` version `0.1.6`, downloads the registry-provided `dist.tarball`, and verifies npm integrity metadata when available. The fetched artifact is stored as `vendor/gaga-0.1.6.tgz` and is intentionally ignored by Git.
+The bootstrap queries `https://npm.cloudsmith.io/gaga/gaga/`, selects package `@gaga/engine` version `0.1.6`, downloads the registry-provided `dist.tarball`, and verifies npm integrity metadata when available. The fetched artifact is stored as `vendor/gaga-0.1.6.tgz` and is intentionally ignored by Git.
 
-If the repository is private, expose `CLOUDSMITH_TOKEN` only as a local, GitHub, or Cloudflare build secret. Do not commit it. If the npm package name differs from `gaga`, set `GAGA_PACKAGE_NAME` during bootstrap. `GAGA_NPM_REGISTRY` can override the registry endpoint if required.
+If the repository is private, expose `CLOUDSMITH_TOKEN` only as a local, GitHub, or Cloudflare build secret. Do not commit it. `GAGA_PACKAGE_NAME` remains available as an explicit bootstrap override. `GAGA_NPM_REGISTRY` can override the registry endpoint if required.
 
 ## Local run
 
-Requirements: Node.js 22.12+ and Corepack.
+Requirements: Node.js 22.19.0+ and Corepack.
 
 ```bash
 ./run_local.command
@@ -51,7 +51,7 @@ pnpm build
 pnpm verify:static
 ```
 
-This source release does not include a fabricated lockfile. The current build sandbox cannot reach the npm or Cloudsmith registries, so dependency resolution could not be performed honestly here. On the first networked installation, let pnpm generate `pnpm-lock.yaml`, rerun all quality gates, then commit that lockfile before the production deployment so transitive dependency resolution is reproducible.
+This source release intentionally starts without a fabricated lockfile. CI disables dependency caching until a real `pnpm-lock.yaml` exists, installs with `--no-frozen-lockfile`, and then executes the full quality gate. After the first successful networked install, commit the generated lockfile to make transitive dependency resolution reproducible and dependency caching can be enabled.
 
 ## Manual GitHub upload
 
@@ -78,7 +78,7 @@ After deployment, verify `https://<worker-domain>/health`. Then set Worker varia
 - Root directory: repository root
 - Build command: `corepack enable && node scripts/bootstrap-gaga.mjs && pnpm install --no-frozen-lockfile && pnpm build:web`
 - Build output: `apps/web/dist`
-- Node.js: 22
+- Node.js: 22.23.3 recommended
 
 Build variables:
 

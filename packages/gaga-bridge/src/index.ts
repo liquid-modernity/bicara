@@ -1,4 +1,4 @@
-import * as GagaEngine from 'gaga';
+import * as GagaEngine from '@gaga/engine';
 
 export const GAGA_ENGINE_VERSION = '0.1.6' as const;
 

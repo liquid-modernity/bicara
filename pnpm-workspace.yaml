@@ -3,7 +3,16 @@ packages:
   - packages/*
   - workers/*
 
+# pnpm 11+ build-script allowlist. Keep this explicit: strictDepBuilds defaults to true.
 allowBuilds:
   "@parcel/watcher": true
   esbuild: true
   workerd: true
+
+# Preserve the 24-hour supply-chain maturity gate while allowing the two
+# exact same-day releases intentionally pinned by this repository.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeExclude:
+  - "astro@7.3.8"
+  - "@cloudflare/workers-types@5.20261009.1"
