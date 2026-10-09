@@ -34,7 +34,7 @@ export default {
     }
 
     if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.5' }, { headers: cors });
+      return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.6' }, { headers: cors });
     }
 
     if (url.pathname === '/turn') {
@@ -329,10 +329,14 @@ async function turnConfiguration(env: Env, headers: HeadersInit): Promise<Respon
 }
 
 function originAllowed(request: Request, env: Env): boolean {
-  const configured = (env.ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
-  if (configured.length === 0) return false;
   const origin = request.headers.get('Origin');
-  return origin != null && configured.includes(origin);
+  if (!origin) return false;
+
+  const requestOrigin = new URL(request.url).origin;
+  if (origin === requestOrigin) return true;
+
+  const configured = (env.ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  return configured.includes(origin);
 }
 
 function corsHeaders(request: Request, env: Env): Record<string, string> {

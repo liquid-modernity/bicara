@@ -35,8 +35,19 @@ for (const forbidden of ['RTCSessionDescriptionInit', 'RTCIceCandidateInit', 'RT
 }
 const workerSource = fs.readFileSync(path.join(root, 'workers/signaling/src/index.ts'), 'utf8');
 if (!workerSource.includes("from '@live-voice/shared-types'")) throw new Error('Worker must consume the shared runtime-neutral signaling protocol.');
+if (!workerSource.includes('origin === requestOrigin')) throw new Error('Worker must allow same-origin production signaling.');
 for (const forbidden of ['RTCSessionDescriptionInit', 'RTCIceCandidateInit', 'RTCIceServer']) {
   if (workerSource.includes(forbidden)) throw new Error(`Worker source must not depend on browser DOM WebRTC types: ${forbidden}`);
+}
+
+const workerConfig = fs.readFileSync(path.join(root, 'workers/signaling/wrangler.jsonc'), 'utf8');
+if (!workerConfig.includes('https://bicara.ratriatra.workers.dev')) {
+  throw new Error('Production Worker origin must be allowed for signaling.');
+}
+
+const webRuntime = fs.readFileSync(path.join(root, 'apps/web/src/scripts/main.ts'), 'utf8');
+if (!webRuntime.includes('window.location.origin')) {
+  throw new Error('Frontend must default to same-origin signaling outside localhost.');
 }
 
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');

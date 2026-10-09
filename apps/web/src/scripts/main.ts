@@ -44,7 +44,7 @@ const capacityLabel = $('#capacity-label');
 const offlineBanner = $('#offline-banner');
 const pttHint = $('#ptt-hint');
 
-const SIGNALING_URL = import.meta.env.PUBLIC_SIGNALING_URL?.trim() || 'http://127.0.0.1:8787';
+const SIGNALING_URL = resolveSignalingUrl();
 const DEFAULT_ROOM = normalizeRoomId(import.meta.env.PUBLIC_DEFAULT_ROOM || 'general') || 'general';
 const configuredMaxParticipants = Number(import.meta.env.PUBLIC_MAX_PARTICIPANTS || '10');
 const MAX_PARTICIPANTS = Number.isFinite(configuredMaxParticipants)
@@ -673,4 +673,12 @@ function registerServiceWorker(): void {
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => void navigator.serviceWorker.register('/sw.js'));
   }
+}
+
+function resolveSignalingUrl(): string {
+  const configured = import.meta.env.PUBLIC_SIGNALING_URL?.trim();
+  if (configured) return configured;
+
+  const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  return isLocalDev ? 'http://127.0.0.1:8787' : window.location.origin;
 }

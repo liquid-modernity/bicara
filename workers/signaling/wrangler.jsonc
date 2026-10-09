@@ -13,7 +13,7 @@
   "vars": {
     "MAX_PARTICIPANTS": "10",
     "TURN_TTL_SECONDS": "43200",
-    "ALLOWED_ORIGINS": "http://localhost:4321,http://127.0.0.1:4321"
+    "ALLOWED_ORIGINS": "https://bicara.ratriatra.workers.dev,http://localhost:4321,http://127.0.0.1:4321"
   },
   "durable_objects": {
     "bindings": [
