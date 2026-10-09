@@ -1,0 +1,26 @@
+{
+  "name": "@live-voice/web",
+  "version": "0.0.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --host 0.0.0.0",
+    "build": "astro build",
+    "preview": "astro preview --host 0.0.0.0",
+    "check": "astro check",
+    "typecheck": "tsc --noEmit -p tsconfig.client.json"
+  },
+  "dependencies": {
+    "@live-voice/gaga-bridge": "workspace:*",
+    "@live-voice/rtc-core": "workspace:*",
+    "@live-voice/shared-types": "workspace:*",
+    "@live-voice/signaling-client": "workspace:*",
+    "@live-voice/voice-domain": "workspace:*",
+    "astro": "7.3.8"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "sass": "1.105.1",
+    "typescript": "5.9.3"
+  }
+}

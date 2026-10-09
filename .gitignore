@@ -1,0 +1,15 @@
+node_modules/
+.pnpm-store/
+dist/
+.astro/
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+coverage/
+
+# GAGA artifact is resolved from Cloudsmith during bootstrap.
+vendor/*.tgz

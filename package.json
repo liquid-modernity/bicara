@@ -1,0 +1,23 @@
+{
+  "name": "live-voice",
+  "version": "0.0.2",
+  "private": true,
+  "description": "Guest-first browser-native realtime voice rooms powered by Astro, WebRTC, GAGA Engine 0.1.6, and Cloudflare.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "bootstrap:gaga": "node scripts/bootstrap-gaga.mjs",
+    "dev": "pnpm --filter @live-voice/web dev",
+    "dev:web": "pnpm --filter @live-voice/web dev",
+    "dev:worker": "pnpm --filter @live-voice/signaling-worker dev",
+    "build": "pnpm -r build",
+    "build:web": "pnpm --filter @live-voice/web build",
+    "build:worker": "pnpm --filter @live-voice/signaling-worker build",
+    "typecheck": "pnpm -r typecheck",
+    "check": "pnpm -r check",
+    "verify:static": "node scripts/verify-static.mjs"
+  },
+  "packageManager": "pnpm@12.11.0"
+}
