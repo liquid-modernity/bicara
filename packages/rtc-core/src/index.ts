@@ -7,9 +7,28 @@ export interface PeerCallbacks {
   onIceConnectionState: (peerId: string, state: RTCIceConnectionState) => void;
 }
 
+export interface PeerQualityMetrics {
+  peerId: string;
+  rttMs: number | null;
+  packetLossRatio: number | null;
+  jitterMs: number | null;
+  bitrateKbps: number | null;
+  iceState: RTCIceConnectionState;
+  iceStateDurationMs: number;
+  iceStateDurationsMs: Partial<Record<RTCIceConnectionState, number>>;
+}
+
 interface PeerRecord {
   connection: RTCPeerConnection;
   pendingIce: RTCIceCandidateInit[];
+  iceState: RTCIceConnectionState;
+  iceStateChangedAt: number;
+  iceStateDurationsMs: Partial<Record<RTCIceConnectionState, number>>;
+  lastStats?: {
+    timestamp: number;
+    bytesSent: number;
+    bytesReceived: number;
+  };
 }
 
 export class VoiceEngine {
@@ -147,31 +166,71 @@ export class MeshPeerManager {
   }
 
   async getAggregateQuality(): Promise<ConnectionQuality> {
-    if (this.peers.size === 0) return 'unknown';
+    const metrics = await this.getPeerQualityMetrics();
+    if (metrics.length === 0) return 'unknown';
     let worstScore = 0;
 
-    for (const { connection } of this.peers.values()) {
-      const stats = await connection.getStats();
-      let rttMs: number | undefined;
-      let packetsLost = 0;
-      let packetsReceived = 0;
-
-      stats.forEach((report) => {
-        if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime != null) {
-          rttMs = report.currentRoundTripTime * 1000;
-        }
-        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
-          packetsLost += Number(report.packetsLost ?? 0);
-          packetsReceived += Number(report.packetsReceived ?? 0);
-        }
-      });
-
-      const loss = packetsLost + packetsReceived > 0 ? packetsLost / (packetsLost + packetsReceived) : 0;
-      const score = (rttMs ?? 0) > 400 || loss > 0.08 ? 2 : (rttMs ?? 0) > 200 || loss > 0.03 ? 1 : 0;
+    for (const metric of metrics) {
+      const rttMs = metric.rttMs ?? 0;
+      const loss = metric.packetLossRatio ?? 0;
+      const score = rttMs > 400 || loss > 0.08 ? 2 : rttMs > 200 || loss > 0.03 ? 1 : 0;
       worstScore = Math.max(worstScore, score);
     }
 
     return worstScore === 2 ? 'poor' : worstScore === 1 ? 'fair' : 'good';
+  }
+
+  async getPeerQualityMetrics(): Promise<PeerQualityMetrics[]> {
+    const snapshots: PeerQualityMetrics[] = [];
+    for (const [peerId, peer] of this.peers) {
+      const stats = await peer.connection.getStats();
+      let rttMs: number | null = null;
+      let packetsLost = 0;
+      let packetsReceived = 0;
+      let jitterMs: number | null = null;
+      let bytesSent = 0;
+      let bytesReceived = 0;
+      let timestamp = 0;
+
+      stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime != null) {
+          rttMs = Math.round(Number(report.currentRoundTripTime) * 1000);
+        }
+        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+          packetsLost += Number(report.packetsLost ?? 0);
+          packetsReceived += Number(report.packetsReceived ?? 0);
+          if (report.jitter != null) jitterMs = Math.max(jitterMs ?? 0, Math.round(Number(report.jitter) * 1000));
+          bytesReceived += Number(report.bytesReceived ?? 0);
+          timestamp = Math.max(timestamp, Number(report.timestamp ?? 0));
+        }
+        if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+          bytesSent += Number(report.bytesSent ?? 0);
+          timestamp = Math.max(timestamp, Number(report.timestamp ?? 0));
+        }
+      });
+
+      let bitrateKbps: number | null = null;
+      const previous = peer.lastStats;
+      if (previous && timestamp > previous.timestamp) {
+        const deltaBytes = Math.max(0, bytesSent + bytesReceived - previous.bytesSent - previous.bytesReceived);
+        bitrateKbps = Math.round((deltaBytes * 8) / ((timestamp - previous.timestamp) / 1000) / 1000);
+      }
+      if (timestamp > 0) peer.lastStats = { timestamp, bytesSent, bytesReceived };
+
+      const packetTotal = packetsLost + packetsReceived;
+      const iceDurations = this.currentIceDurations(peer);
+      snapshots.push({
+        peerId,
+        rttMs,
+        packetLossRatio: packetTotal > 0 ? packetsLost / packetTotal : null,
+        jitterMs,
+        bitrateKbps,
+        iceState: peer.iceState,
+        iceStateDurationMs: Date.now() - peer.iceStateChangedAt,
+        iceStateDurationsMs: iceDurations
+      });
+    }
+    return snapshots;
   }
 
   closeAll(): void {
@@ -187,7 +246,13 @@ export class MeshPeerManager {
       iceServers: this.iceServers,
       bundlePolicy: 'max-bundle'
     });
-    const record: PeerRecord = { connection, pendingIce: [] };
+    const record: PeerRecord = {
+      connection,
+      pendingIce: [],
+      iceState: connection.iceConnectionState,
+      iceStateChangedAt: Date.now(),
+      iceStateDurationsMs: {}
+    };
     this.peers.set(peerId, record);
 
     this.localStream.getTracks().forEach((track) => connection.addTrack(track, this.localStream));
@@ -206,10 +271,26 @@ export class MeshPeerManager {
     });
 
     connection.addEventListener('iceconnectionstatechange', () => {
+      this.recordIceState(record, connection.iceConnectionState);
       this.callbacks.onIceConnectionState(peerId, connection.iceConnectionState);
     });
 
     return record;
+  }
+
+  private recordIceState(peer: PeerRecord, nextState: RTCIceConnectionState): void {
+    if (peer.iceState === nextState) return;
+    const now = Date.now();
+    peer.iceStateDurationsMs[peer.iceState] = (peer.iceStateDurationsMs[peer.iceState] ?? 0) + now - peer.iceStateChangedAt;
+    peer.iceState = nextState;
+    peer.iceStateChangedAt = now;
+  }
+
+  private currentIceDurations(peer: PeerRecord): Partial<Record<RTCIceConnectionState, number>> {
+    return {
+      ...peer.iceStateDurationsMs,
+      [peer.iceState]: (peer.iceStateDurationsMs[peer.iceState] ?? 0) + Date.now() - peer.iceStateChangedAt
+    };
   }
 
   private async flushIce(peer: PeerRecord): Promise<void> {

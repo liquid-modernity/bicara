@@ -25,7 +25,7 @@ for (const relative of required) {
 
 
 const rootPackage = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-if (rootPackage.version !== '0.0.7') throw new Error('Release version must be 0.0.7.');
+if (rootPackage.version !== '0.0.8') throw new Error('Release version must be 0.0.8.');
 if (rootPackage.packageManager !== 'pnpm@12.11.0') throw new Error('pnpm version drift detected.');
 if (rootPackage.engines?.node !== '>=22.19.0') throw new Error('Node engine floor must satisfy GAGA Engine 0.1.6.');
 
@@ -53,7 +53,7 @@ if (!webRuntime.includes('window.location.origin')) {
 if (!webRuntime.includes('gaga:peer-recovery-scheduled')) throw new Error('WebRTC recovery diagnostics must be emitted through GAGA.');
 
 const serviceWorker = fs.readFileSync(path.join(root, 'apps/web/public/sw.js'), 'utf8');
-if (!serviceWorker.includes("live-voice-v0.0.7")) throw new Error('Service worker cache version must match release 0.0.7.');
+if (!serviceWorker.includes("live-voice-v0.0.8")) throw new Error('Service worker cache version must match release 0.0.8.');
 
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
 if (/cache:\s*pnpm/.test(workflow)) throw new Error('CI must not enable pnpm cache before a real lockfile is committed.');

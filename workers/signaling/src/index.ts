@@ -35,12 +35,12 @@ export default {
       }
 
       if (url.pathname === '/health') {
-        return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.7' }, { headers: cors });
+        return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.8' }, { headers: cors });
       }
 
       if (url.pathname === '/turn') {
         if (!originAllowed(request, env)) {
-          logWorkerEvent('worker.origin_denied', { path: url.pathname, origin: request.headers.get('Origin') ?? 'missing' });
+          logWorkerEvent('worker.origin_denied', { metric: 'rejected_connection', path: url.pathname, origin: request.headers.get('Origin') ?? 'missing' });
           return jsonError('ORIGIN_NOT_ALLOWED', 403, cors);
         }
         return turnConfiguration(env, cors);
@@ -48,10 +48,11 @@ export default {
 
       if (url.pathname === '/signal') {
         if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+          logWorkerEvent('worker.websocket_required', { metric: 'rejected_connection', path: url.pathname });
           return jsonError('WEBSOCKET_REQUIRED', 426, cors);
         }
         if (!originAllowed(request, env)) {
-          logWorkerEvent('worker.origin_denied', { path: url.pathname, origin: request.headers.get('Origin') ?? 'missing' });
+          logWorkerEvent('worker.origin_denied', { metric: 'rejected_connection', path: url.pathname, origin: request.headers.get('Origin') ?? 'missing' });
           return jsonError('ORIGIN_NOT_ALLOWED', 403, cors);
         }
 
@@ -60,6 +61,7 @@ export default {
         const displayName = normalizeDisplayName(url.searchParams.get('name') ?? '');
         if (!roomId || !participantId || !displayName) {
           logWorkerEvent('worker.invalid_join', {
+            metric: 'rejected_connection',
             hasRoom: Boolean(roomId),
             hasParticipant: Boolean(participantId),
             hasDisplayName: Boolean(displayName)
@@ -79,7 +81,7 @@ export default {
 
       return new Response('Not found', { status: 404, headers: cors });
     } catch (error) {
-      logWorkerEvent('worker.error', { reason: errorReason(error) });
+      logWorkerEvent('worker.error', { metric: 'do_exception', reason: errorReason(error) });
       return Response.json({ error: 'INTERNAL_ERROR' }, { status: 500, headers: JSON_HEADERS });
     }
   }
@@ -87,8 +89,18 @@ export default {
 
 export class VoiceRoom extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
+    try {
+      return this.connectRequest(request);
+    } catch (error) {
+      logWorkerEvent('worker.do_exception', { metric: 'do_exception', reason: errorReason(error) });
+      return new Response('Internal error', { status: 500 });
+    }
+  }
+
+  private async connectRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname !== '/internal/connect' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      logWorkerEvent('worker.websocket_required', { metric: 'rejected_connection', path: url.pathname });
       return new Response('Expected WebSocket', { status: 426 });
     }
 
@@ -96,7 +108,15 @@ export class VoiceRoom extends DurableObject<Env> {
     const participantId = normalizeParticipantId(url.searchParams.get('participant') ?? '');
     const displayName = normalizeDisplayName(url.searchParams.get('name') ?? '');
     const max = clamp(Number(url.searchParams.get('max') ?? '10'), 2, 25);
-    if (!roomId || !participantId || !displayName) return new Response('Invalid join', { status: 400 });
+    if (!roomId || !participantId || !displayName) {
+      logWorkerEvent('worker.invalid_join', {
+        metric: 'rejected_connection',
+        hasRoom: Boolean(roomId),
+        hasParticipant: Boolean(participantId),
+        hasDisplayName: Boolean(displayName)
+      });
+      return new Response('Invalid join', { status: 400 });
+    }
 
     const current = this.closeStaleSockets(roomId, this.ctx.getWebSockets(roomId));
     const duplicate = current.find((socket) =>
@@ -110,7 +130,7 @@ export class VoiceRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, [roomId]);
 
     if (activeOthers.length >= max) {
-      logWorkerEvent('room.full', { roomId, participantCount: activeOthers.length, max });
+      logWorkerEvent('room.full', { metric: 'rejected_connection', roomId, participantCount: activeOthers.length, max });
       safeSend(server, {
         type: 'error',
         code: 'ROOM_FULL',
@@ -134,7 +154,7 @@ export class VoiceRoom extends DurableObject<Env> {
     // Register the replacement before closing the old socket so the close handler
     // can see the replacement and does not broadcast a false participant.left.
     if (duplicate) {
-      logWorkerEvent('participant.replaced', { roomId, participantId });
+      logWorkerEvent('participant.replaced', { metric: 'room', roomId, participantId, reconnectCount: 1 });
       duplicate.close(4001, 'replaced_by_reconnect');
     }
 
@@ -151,11 +171,14 @@ export class VoiceRoom extends DurableObject<Env> {
       participants: existingParticipants.map(publicParticipant)
     });
 
-    if (activeOthers.length === 0 && !duplicate) logWorkerEvent('room.created', { roomId });
+    if (activeOthers.length === 0 && !duplicate) logWorkerEvent('room.created', { metric: 'room', roomId });
     logWorkerEvent('participant.joined', {
+      metric: 'room',
       roomId,
       participantId,
       participantCount: activeOthers.length + 1,
+      roomDurationMs: roomDurationMs(existingParticipants.map((participant) => participant.joinedAt).concat(attachment.joinedAt)),
+      joinAccepted: true,
       reconnect: Boolean(duplicate)
     });
 
@@ -168,14 +191,29 @@ export class VoiceRoom extends DurableObject<Env> {
   }
 
   webSocketMessage(socket: WebSocket, raw: string | ArrayBuffer): void {
+    try {
+      this.handleSocketMessage(socket, raw);
+    } catch (error) {
+      const attachment = socketAttachment(socket);
+      logWorkerEvent('worker.do_exception', {
+        metric: 'do_exception',
+        reason: errorReason(error),
+        roomId: attachment?.roomId ?? 'unknown',
+        participantId: attachment?.participantId ?? 'unknown'
+      });
+      socket.close(1011, 'do_exception');
+    }
+  }
+
+  private handleSocketMessage(socket: WebSocket, raw: string | ArrayBuffer): void {
     const attachment = socketAttachment(socket);
     if (!attachment) {
-      logWorkerEvent('worker.error', { reason: 'invalid_session' });
+      logWorkerEvent('worker.error', { metric: 'websocket_error', reason: 'invalid_session' });
       return socket.close(4002, 'invalid_session');
     }
 
     if (typeof raw !== 'string' || new TextEncoder().encode(raw).byteLength > MAX_MESSAGE_BYTES) {
-      logWorkerEvent('worker.invalid_message', { roomId: attachment.roomId, participantId: attachment.participantId, reason: 'size_or_type' });
+      logWorkerEvent('worker.invalid_message', { metric: 'rejected_connection', roomId: attachment.roomId, participantId: attachment.participantId, reason: 'size_or_type' });
       return socket.close(4003, 'invalid_message');
     }
 
@@ -183,12 +221,12 @@ export class VoiceRoom extends DurableObject<Env> {
     try {
       message = JSON.parse(raw) as ClientMessage;
     } catch {
-      logWorkerEvent('worker.invalid_message', { roomId: attachment.roomId, participantId: attachment.participantId, reason: 'json' });
+      logWorkerEvent('worker.invalid_message', { metric: 'rejected_connection', roomId: attachment.roomId, participantId: attachment.participantId, reason: 'json' });
       return safeSend(socket, { type: 'error', code: 'INVALID_JSON', message: 'Invalid JSON payload.', recoverable: true });
     }
 
     if (!isClientMessage(message)) {
-      logWorkerEvent('worker.invalid_message', { roomId: attachment.roomId, participantId: attachment.participantId, reason: 'schema' });
+      logWorkerEvent('worker.invalid_message', { metric: 'rejected_connection', roomId: attachment.roomId, participantId: attachment.participantId, reason: 'schema' });
       return safeSend(socket, { type: 'error', code: 'INVALID_MESSAGE', message: 'Unsupported signaling message.', recoverable: true });
     }
 
@@ -215,7 +253,7 @@ export class VoiceRoom extends DurableObject<Env> {
 
     const target = this.findParticipant(attachment.roomId, message.targetId);
     if (!target) {
-      logWorkerEvent('worker.target_missing', { roomId: attachment.roomId, participantId: attachment.participantId, targetId: message.targetId });
+      logWorkerEvent('worker.target_missing', { metric: 'rejected_connection', roomId: attachment.roomId, participantId: attachment.participantId, targetId: message.targetId });
       safeSend(socket, { type: 'error', code: 'TARGET_NOT_FOUND', message: 'Target participant is no longer connected.', recoverable: true });
       return;
     }
@@ -235,6 +273,7 @@ export class VoiceRoom extends DurableObject<Env> {
   webSocketError(socket: WebSocket): void {
     const attachment = socketAttachment(socket);
     logWorkerEvent('worker.error', {
+      metric: 'websocket_error',
       reason: 'websocket_error',
       roomId: attachment?.roomId ?? 'unknown',
       participantId: attachment?.participantId ?? 'unknown'
@@ -254,7 +293,12 @@ export class VoiceRoom extends DurableObject<Env> {
         && socketAttachment(candidate)?.participantId === attachment.participantId);
 
     if (!replacementExists) {
-      logWorkerEvent('participant.left', { roomId: attachment.roomId, participantId: attachment.participantId });
+      logWorkerEvent('participant.left', {
+        metric: 'room',
+        roomId: attachment.roomId,
+        participantId: attachment.participantId,
+        ...this.roomSnapshot(attachment.roomId, socket)
+      });
       this.broadcast(attachment.roomId, { type: 'participant.left', participantId: attachment.participantId }, socket);
     }
   }
@@ -279,6 +323,19 @@ export class VoiceRoom extends DurableObject<Env> {
 
   private findParticipant(roomId: string, participantId: string): WebSocket | undefined {
     return this.ctx.getWebSockets(roomId).find((socket) => socketAttachment(socket)?.participantId === participantId && socket.readyState === WebSocket.OPEN);
+  }
+
+  private roomSnapshot(roomId: string, except?: WebSocket): { participantCount: number; roomDurationMs: number } {
+    const joinedAt: number[] = [];
+    for (const socket of this.ctx.getWebSockets(roomId)) {
+      if (socket === except || socket.readyState !== WebSocket.OPEN) continue;
+      const attachment = socketAttachment(socket);
+      if (attachment) joinedAt.push(attachment.joinedAt);
+    }
+    return {
+      participantCount: joinedAt.length,
+      roomDurationMs: roomDurationMs(joinedAt)
+    };
   }
 
   private broadcast(roomId: string, message: unknown, except?: WebSocket): void {
@@ -379,12 +436,12 @@ async function turnConfiguration(env: Env, headers: HeadersInit): Promise<Respon
       body: JSON.stringify({ ttl })
     });
   } catch (error) {
-    logWorkerEvent('worker.error', { reason: 'turn_fetch_failed', detail: errorReason(error) });
+    logWorkerEvent('worker.error', { metric: 'worker_error', reason: 'turn_fetch_failed', detail: errorReason(error) });
     return Response.json({ iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }] }, { status: 200, headers });
   }
 
   if (!response.ok) {
-    logWorkerEvent('worker.error', { reason: 'turn_credentials_rejected', status: response.status });
+    logWorkerEvent('worker.error', { metric: 'worker_error', reason: 'turn_credentials_rejected', status: response.status });
     return Response.json({ iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }] }, { status: 200, headers });
   }
 
@@ -443,6 +500,11 @@ function normalizeDisplayName(value: string): string {
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function roomDurationMs(joinedAt: number[]): number {
+  if (joinedAt.length === 0) return 0;
+  return Date.now() - Math.min(...joinedAt);
 }
 
 function logWorkerEvent(event: string, detail: Record<string, unknown> = {}): void {

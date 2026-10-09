@@ -47,7 +47,7 @@ export interface LiveVoiceGagaRuntime {
 
 const liveVoiceCapability = defineCapability<LiveVoiceGagaConfig>({
   id: LIVE_VOICE_CAPABILITY_ID,
-  version: '0.0.7',
+  version: '0.0.8',
   executionContext: 'BROWSER',
   stability: 'PUBLIC_EXPERIMENTAL',
   publicEntrypoint: '@live-voice/gaga-bridge',

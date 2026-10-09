@@ -1,5 +1,6 @@
 import { initializeGagaRuntime } from '@live-voice/gaga-bridge';
 import { MeshPeerManager, VoiceEngine } from '@live-voice/rtc-core';
+import type { PeerQualityMetrics } from '@live-voice/rtc-core';
 import type {
   ConnectionQuality,
   Participant,
@@ -43,7 +44,9 @@ const audioOutputSelect = $('#audio-output') as HTMLSelectElement;
 const capacityLabel = $('#capacity-label');
 const offlineBanner = $('#offline-banner');
 const pttHint = $('#ptt-hint');
+const diagnosticsPanel = document.querySelector<HTMLPreElement>('#diagnostics-panel');
 
+const DIAGNOSTICS_ENABLED = import.meta.env.DEV;
 const SIGNALING_URL = resolveSignalingUrl();
 const DEFAULT_ROOM = normalizeRoomId(import.meta.env.PUBLIC_DEFAULT_ROOM || 'general') || 'general';
 const configuredMaxParticipants = Number(import.meta.env.PUBLIC_MAX_PARTICIPANTS || '10');
@@ -66,6 +69,8 @@ let stopSpeakingMonitor: (() => void) | undefined;
 let qualityTimer: number | undefined;
 const peerRecoveryTimers = new Map<string, number>();
 const peerMetrics = new Map<string, PeerMetrics>();
+let roomMetrics = createRoomMetrics();
+let lastSignalingState: 'connecting' | 'open' | 'closed' | 'reconnecting' | 'failed' | undefined;
 let beforeInstallPrompt: BeforeInstallPromptEvent | undefined;
 let locale = detectLocale();
 let t = createTranslator(locale);
@@ -81,6 +86,17 @@ interface PeerMetrics {
   iceTimeline: string[];
   reconnectAttempts: number;
 }
+
+interface RoomMetrics {
+  joinAttempts: number;
+  joinSuccesses: number;
+  joinFailures: number;
+  reconnectCount: number;
+  roomStartedAt: number;
+  lastJoinRequestedAt: number;
+}
+
+type ClientLogDetail = Record<string, unknown>;
 
 const gaga = initializeGagaRuntime({
   applicationId: 'live-voice',
@@ -173,11 +189,18 @@ function setupEvents(): void {
 
   gaga.lifecycle.use(signaling.onState((state) => {
     if (state === 'connecting') setConnectionStatus('connecting');
-    if (state === 'reconnecting') setConnectionStatus('reconnecting');
+    if (state === 'reconnecting') {
+      if (lastSignalingState !== 'reconnecting') {
+        roomMetrics.reconnectCount += 1;
+        logRoomMetrics('room.reconnect');
+      }
+      setConnectionStatus('reconnecting');
+    }
     if (state === 'failed') {
       setConnectionStatus('failed');
       showError(t('genericError'));
     }
+    lastSignalingState = state;
   }));
   gaga.lifecycle.use(signaling.onMessage((message) => {
     void handleSignal(message).catch(() => {
@@ -206,27 +229,34 @@ function setupEvents(): void {
 
 async function joinRoom(): Promise<void> {
   clearError();
+  roomMetrics.joinAttempts += 1;
+  roomMetrics.lastJoinRequestedAt = Date.now();
   displayName = normalizeDisplayName(nameInput.value);
   roomId = normalizeRoomId(roomInput.value);
 
   if (!displayName) {
+    recordJoinFailure('display-name');
     nameInput.focus();
     return;
   }
   if (!roomId) {
+    recordJoinFailure('room-id');
     roomInput.focus();
     return;
   }
   if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    recordJoinFailure('secure-context');
     showError(t('secureRequired'));
     return;
   }
   if (typeof navigator.mediaDevices?.getUserMedia !== 'function') {
+    recordJoinFailure('media-devices');
     showError(t('micMissing'));
     setConnectionStatus('failed');
     return;
   }
   if (!navigator.onLine) {
+    recordJoinFailure('offline');
     showError(t('offline'));
     return;
   }
@@ -274,8 +304,10 @@ async function joinRoom(): Promise<void> {
     updateUrlRoom(roomId);
     startQualityMonitor();
     gaga.emit('gaga:room-join-requested', { roomId, participantId });
+    logRoomMetrics('room.join_requested');
     render();
   } catch (error) {
+    recordJoinFailure(mapMediaFailureReason(error));
     joinButton.disabled = false;
     joinButton.textContent = t('join');
     showError(mapMediaError(error));
@@ -289,6 +321,8 @@ async function joinRoom(): Promise<void> {
 async function handleSignal(message: ServerSignalMessage): Promise<void> {
   switch (message.type) {
     case 'room.welcome': {
+      roomMetrics.joinSuccesses += 1;
+      roomMetrics.roomStartedAt = Date.now();
       participants = new Map([[participantId, localParticipant()]]);
       for (const participant of message.participants) upsertRemoteParticipant(participant);
       setConnectionStatus('connected');
@@ -302,11 +336,13 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
         if (offer) signaling.send({ type: 'signal.offer', targetId: participant.id, payload: offer });
       }
       gaga.emit('gaga:room-joined', { roomId, participantId, participantCount: participants.size });
+      logRoomMetrics('room.joined');
       render();
       break;
     }
     case 'participant.joined':
       upsertRemoteParticipant(message.participant);
+      logRoomMetrics('room.participant_joined');
       render();
       break;
     case 'participant.updated':
@@ -318,6 +354,7 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
       mesh?.remove(message.participantId);
       peerMetrics.delete(message.participantId);
       removeRemoteAudio(message.participantId);
+      logRoomMetrics('room.participant_left');
       render();
       break;
     case 'signal.offer': {
@@ -341,6 +378,7 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
 }
 
 function leaveRoom(updateUi = true): void {
+  if (roomMetrics.joinAttempts > 0 || participants.size > 0) logRoomMetrics('room.left');
   signaling.send({ type: 'room.leave' });
   signaling.close();
   mesh?.closeAll();
@@ -355,6 +393,8 @@ function leaveRoom(updateUi = true): void {
   audioBin.replaceChildren();
   participants.clear();
   peerMetrics.clear();
+  roomMetrics = createRoomMetrics();
+  lastSignalingState = undefined;
   speaking = false;
   muted = true;
 
@@ -557,7 +597,113 @@ function iceFailureReason(state: RTCIceConnectionState): string {
   return 'none';
 }
 
-function logClientEvent(event: string, detail: Record<string, string | number | boolean>): void {
+function createRoomMetrics(): RoomMetrics {
+  return {
+    joinAttempts: 0,
+    joinSuccesses: 0,
+    joinFailures: 0,
+    reconnectCount: 0,
+    roomStartedAt: 0,
+    lastJoinRequestedAt: 0
+  };
+}
+
+function recordJoinFailure(reason: string): void {
+  roomMetrics.joinFailures += 1;
+  gaga.emit('gaga:room-join-failed', { roomId, participantId, reason, ...roomMetricSnapshot() });
+  logRoomMetrics('room.join_failed', { reason });
+  renderDiagnostics('unknown', [], aggregatePeerQuality([]));
+}
+
+function mapMediaFailureReason(error: unknown): string {
+  if (error instanceof DOMException) return error.name;
+  return 'unknown';
+}
+
+function logRoomMetrics(event: string, detail: ClientLogDetail = {}): void {
+  const snapshot = roomMetricSnapshot();
+  gaga.emit(`gaga:${event}`, { roomId, participantId, ...snapshot, ...detail });
+  logClientEvent(event, { roomId, participantId, ...snapshot, ...detail });
+}
+
+function roomMetricSnapshot(): ClientLogDetail {
+  return {
+    roomDurationMs: roomDurationMs(),
+    participantCount: participants.size,
+    joinAttempts: roomMetrics.joinAttempts,
+    joinSuccesses: roomMetrics.joinSuccesses,
+    joinFailures: roomMetrics.joinFailures,
+    joinSuccessRate: roomMetrics.joinAttempts > 0 ? round(roomMetrics.joinSuccesses / roomMetrics.joinAttempts, 3) : null,
+    reconnectCount: roomMetrics.reconnectCount
+  };
+}
+
+function roomDurationMs(): number {
+  return roomMetrics.roomStartedAt > 0 ? Date.now() - roomMetrics.roomStartedAt : 0;
+}
+
+function qualityFromPeerMetrics(metrics: PeerQualityMetrics[]): ConnectionQuality {
+  if (metrics.length === 0) return 'unknown';
+  let worstScore = 0;
+  for (const metric of metrics) {
+    const rttMs = metric.rttMs ?? 0;
+    const loss = metric.packetLossRatio ?? 0;
+    const score = rttMs > 400 || loss > 0.08 ? 2 : rttMs > 200 || loss > 0.03 ? 1 : 0;
+    worstScore = Math.max(worstScore, score);
+  }
+  return worstScore === 2 ? 'poor' : worstScore === 1 ? 'fair' : 'good';
+}
+
+function aggregatePeerQuality(metrics: PeerQualityMetrics[]): ClientLogDetail {
+  return {
+    peerCount: metrics.length,
+    avgRttMs: average(metrics.map((metric) => metric.rttMs)),
+    packetLossPct: percentage(average(metrics.map((metric) => metric.packetLossRatio))),
+    avgJitterMs: average(metrics.map((metric) => metric.jitterMs)),
+    bitrateKbps: sum(metrics.map((metric) => metric.bitrateKbps)),
+    maxIceStateDurationMs: max(metrics.map((metric) => metric.iceStateDurationMs)),
+    totalPeerReconnects: [...peerMetrics.values()].reduce((total, metric) => total + metric.reconnectAttempts, 0)
+  };
+}
+
+function renderDiagnostics(quality: ConnectionQuality, peerQuality: PeerQualityMetrics[], aggregate: ClientLogDetail): void {
+  if (!DIAGNOSTICS_ENABLED || !diagnosticsPanel) return;
+  diagnosticsPanel.hidden = false;
+  diagnosticsPanel.textContent = JSON.stringify({
+    room: roomMetricSnapshot(),
+    quality,
+    aggregate,
+    peers: peerQuality
+  }, null, 2);
+}
+
+function average(values: Array<number | null>): number | null {
+  const numeric = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  if (numeric.length === 0) return null;
+  return round(numeric.reduce((total, value) => total + value, 0) / numeric.length, 2);
+}
+
+function sum(values: Array<number | null>): number | null {
+  const numeric = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  if (numeric.length === 0) return null;
+  return round(numeric.reduce((total, value) => total + value, 0), 2);
+}
+
+function max(values: number[]): number | null {
+  const numeric = values.filter((value) => Number.isFinite(value));
+  return numeric.length > 0 ? Math.max(...numeric) : null;
+}
+
+function percentage(value: number | null): number | null {
+  return value == null ? null : round(value * 100, 2);
+}
+
+function round(value: number, places: number): number {
+  const factor = 10 ** places;
+  return Math.round(value * factor) / factor;
+}
+
+function logClientEvent(event: string, detail: ClientLogDetail): void {
   console.info(JSON.stringify({ ts: new Date().toISOString(), event, ...detail }));
 }
 
@@ -584,9 +730,26 @@ function startQualityMonitor(): void {
 }
 
 async function updateQuality(): Promise<void> {
-  const quality = (await mesh?.getAggregateQuality()) ?? 'unknown';
+  const peerQuality = (await mesh?.getPeerQualityMetrics()) ?? [];
+  const quality = qualityFromPeerMetrics(peerQuality);
+  const aggregate = aggregatePeerQuality(peerQuality);
   qualityLabel.dataset.quality = quality;
   qualityLabel.textContent = qualityText(quality);
+  gaga.emit('gaga:webrtc-quality-sample', {
+    quality,
+    ...aggregate,
+    participantCount: participants.size,
+    roomDurationMs: roomDurationMs(),
+    reconnectCount: roomMetrics.reconnectCount
+  });
+  logClientEvent('webrtc.quality_sample', {
+    quality,
+    ...aggregate,
+    participantCount: participants.size,
+    roomDurationMs: roomDurationMs(),
+    reconnectCount: roomMetrics.reconnectCount
+  });
+  renderDiagnostics(quality, peerQuality, aggregate);
 }
 
 function qualityText(quality: ConnectionQuality): string {

@@ -1,4 +1,4 @@
-# Live Voice v0.0.7
+# Live Voice v0.0.8
 
 Guest-first browser-native realtime voice rooms built from the supplied Live Voice PRD, TAD, UX, API, repository, and milestone materials.
 

@@ -1,4 +1,4 @@
-# Release Verification: Live Voice v0.0.7
+# Release Verification: Live Voice v0.0.8
 
 ## Local release gates completed
 
