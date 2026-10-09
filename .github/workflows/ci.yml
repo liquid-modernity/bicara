@@ -18,8 +18,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10.18.3
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -33,13 +31,7 @@ jobs:
           CLOUDSMITH_TOKEN: ${{ secrets.CLOUDSMITH_TOKEN }}
 
       - name: Install dependencies
-        run: |
-          pnpm config set ignore-scripts false
-          pnpm install --no-frozen-lockfile
-
-      - name: Approve dependency builds
-        run: |
-          pnpm approve-builds || true
+        run: pnpm install --no-frozen-lockfile
 
       - name: Typecheck
         run: pnpm typecheck

@@ -2,8 +2,8 @@ packages:
   - apps/*
   - packages/*
   - workers/*
-  
-onlyBuiltDependencies:
-  - "@parcel/watcher"
-  - esbuild
-  - workerd
+
+allowBuilds:
+  "@parcel/watcher": true
+  esbuild: true
+  workerd: true
