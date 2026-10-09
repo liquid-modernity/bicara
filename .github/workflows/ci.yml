@@ -22,7 +22,8 @@ jobs:
       - run: node scripts/bootstrap-gaga.mjs
         env:
           CLOUDSMITH_TOKEN: ${{ secrets.CLOUDSMITH_TOKEN }}
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm approve-builds --global || true
+      - run: pnpm install --no-frozen-lockfile --config.ignore-scripts=false
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm verify:static
