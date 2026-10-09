@@ -3,6 +3,9 @@
   "name": "live-voice-signaling",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-09",
+  "assets": {
+    "directory": "../../apps/web/dist"
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
