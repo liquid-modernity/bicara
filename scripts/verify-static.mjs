@@ -25,7 +25,7 @@ for (const relative of required) {
 
 
 const rootPackage = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-if (rootPackage.version !== '0.0.5') throw new Error('Release version must be 0.0.6.');
+if (rootPackage.version !== '0.0.6') throw new Error('Release version must be 0.0.6.');
 if (rootPackage.packageManager !== 'pnpm@12.11.0') throw new Error('pnpm version drift detected.');
 if (rootPackage.engines?.node !== '>=22.19.0') throw new Error('Node engine floor must satisfy GAGA Engine 0.1.6.');
 
