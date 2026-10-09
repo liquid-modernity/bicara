@@ -82,7 +82,7 @@ Deploy two Cloudflare projects from the same repository. Detailed steps are in `
 Use the repository root for the build context.
 
 - Build command: `corepack enable && node scripts/bootstrap-gaga.mjs && pnpm install --no-frozen-lockfile`
-- Deploy command: `pnpm --filter @live-voice/signaling-worker deploy`
+- Deploy command: `pnpm --filter @live-voice/signaling-worker run deploy`
 - Configuration: `workers/signaling/wrangler.jsonc`
 
 After deployment, verify `https://<worker-domain>/health`. Same-origin Worker deployments work without a production hostname in config. Set Worker variable `ALLOWED_ORIGINS` only when the frontend is served from a separate origin, for example `https://voice.example.com`.

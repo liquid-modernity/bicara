@@ -15,7 +15,7 @@ Build command:
 corepack enable && node scripts/bootstrap-gaga.mjs && pnpm install --no-frozen-lockfile
 
 Deploy command:
-pnpm --filter @live-voice/signaling-worker deploy
+pnpm --filter @live-voice/signaling-worker run deploy
 ```
 
 The deploy command reads `workers/signaling/wrangler.jsonc`. The first deploy creates the `ROOMS` Durable Object migration.
