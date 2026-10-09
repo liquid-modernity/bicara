@@ -5,8 +5,11 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const VERSION = '0.1.6';
-const PACKAGE_NAME = process.env.GAGA_PACKAGE_NAME?.trim() || 'gaga';
-const REGISTRY = ensureTrailingSlash(process.env.GAGA_NPM_REGISTRY?.trim() || 'https://npm.cloudsmith.io/gaga/gaga/');
+const PACKAGE_NAME = process.env.GAGA_PACKAGE_NAME?.trim() || '@gaga/engine';
+const REGISTRY = ensureTrailingSlash(
+  process.env.GAGA_NPM_REGISTRY?.trim() ||
+  'https://npm.cloudsmith.io/gaga/gaga/'
+);
 const TOKEN = process.env.CLOUDSMITH_TOKEN?.trim();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const vendorDir = path.join(root, 'vendor');
