@@ -1,6 +1,6 @@
 {
   "name": "@live-voice/voice-domain",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",

@@ -62,10 +62,10 @@ let speaking = false;
 const storedMode = localStorage.getItem('live-voice-mode');
 let mode: VoiceMode = storedMode === 'push-to-talk' ? 'push-to-talk' : 'open-mic';
 let participants = new Map<string, Participant>();
-let serverParticipants = new Map<string, SignalingParticipant>();
 let stopSpeakingMonitor: (() => void) | undefined;
 let qualityTimer: number | undefined;
 const peerRecoveryTimers = new Map<string, number>();
+const peerMetrics = new Map<string, PeerMetrics>();
 let beforeInstallPrompt: BeforeInstallPromptEvent | undefined;
 let locale = detectLocale();
 let t = createTranslator(locale);
@@ -73,6 +73,13 @@ let t = createTranslator(locale);
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+
+interface PeerMetrics {
+  startedAt: number;
+  connectionTimeline: string[];
+  iceTimeline: string[];
+  reconnectAttempts: number;
 }
 
 const gaga = initializeGagaRuntime({
@@ -235,7 +242,8 @@ async function joinRoom(): Promise<void> {
     mesh = new MeshPeerManager(stream, iceServers, {
       sendIce: (targetId, candidate) => signaling.send({ type: 'signal.ice', targetId, payload: candidate }),
       onRemoteStream: attachRemoteStream,
-      onConnectionState: handlePeerConnectionState
+      onConnectionState: handlePeerConnectionState,
+      onIceConnectionState: handlePeerIceConnectionState
     });
 
     muted = mode === 'push-to-talk';
@@ -243,7 +251,7 @@ async function joinRoom(): Promise<void> {
     localStorage.setItem('live-voice-display-name', displayName);
 
     participants.clear();
-    serverParticipants.clear();
+    peerMetrics.clear();
     participants.set(participantId, localParticipant());
 
     stopSpeakingMonitor?.();
@@ -281,7 +289,6 @@ async function joinRoom(): Promise<void> {
 async function handleSignal(message: ServerSignalMessage): Promise<void> {
   switch (message.type) {
     case 'room.welcome': {
-      serverParticipants = new Map(message.participants.map((participant) => [participant.id, participant]));
       participants = new Map([[participantId, localParticipant()]]);
       for (const participant of message.participants) upsertRemoteParticipant(participant);
       setConnectionStatus('connected');
@@ -299,19 +306,17 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
       break;
     }
     case 'participant.joined':
-      serverParticipants.set(message.participant.id, message.participant);
       upsertRemoteParticipant(message.participant);
       render();
       break;
     case 'participant.updated':
-      serverParticipants.set(message.participant.id, message.participant);
       upsertRemoteParticipant(message.participant);
       render();
       break;
     case 'participant.left':
-      serverParticipants.delete(message.participantId);
       participants.delete(message.participantId);
       mesh?.remove(message.participantId);
+      peerMetrics.delete(message.participantId);
       removeRemoteAudio(message.participantId);
       render();
       break;
@@ -349,7 +354,7 @@ function leaveRoom(updateUi = true): void {
   qualityTimer = undefined;
   audioBin.replaceChildren();
   participants.clear();
-  serverParticipants.clear();
+  peerMetrics.clear();
   speaking = false;
   muted = true;
 
@@ -433,11 +438,18 @@ async function resumeRemoteAudio(): Promise<void> {
 function handlePeerConnectionState(peerId: string, state: RTCPeerConnectionState): void {
   const participant = participants.get(peerId);
   if (!participant) return;
+  const metrics = recordPeerConnectionState(peerId, state);
   participant.connectionState = peerUiState(state);
   participants.set(peerId, participant);
   renderParticipants();
 
-  gaga.emit('gaga:peer-connection-state', { peerId, state });
+  gaga.emit('gaga:peer-connection-state', {
+    peerId,
+    state,
+    reconnectAttempts: metrics.reconnectAttempts,
+    timeline: metrics.connectionTimeline.join(',')
+  });
+  logClientEvent('webrtc.connection_state', { peerId, state, reconnectAttempts: metrics.reconnectAttempts });
 
   if (state === 'connected') {
     const timer = peerRecoveryTimers.get(peerId);
@@ -468,24 +480,85 @@ function peerUiState(state: RTCPeerConnectionState): Participant['connectionStat
 function schedulePeerRecovery(peerId: string, delayMs: number, reason: 'disconnected' | 'failed'): void {
   // Only one deterministic side initiates recovery, preventing offer glare.
   if (participantId.localeCompare(peerId) >= 0 || peerRecoveryTimers.has(peerId)) return;
-  gaga.emit('gaga:peer-recovery-scheduled', { peerId, reason, delayMs });
+  const metrics = metricsForPeer(peerId);
+  metrics.reconnectAttempts += 1;
+  gaga.emit('gaga:peer-recovery-scheduled', { peerId, reason, delayMs, reconnectAttempts: metrics.reconnectAttempts });
+  logClientEvent('webrtc.recovery_scheduled', { peerId, reason, delayMs, reconnectAttempts: metrics.reconnectAttempts });
   const timer = window.setTimeout(() => {
     peerRecoveryTimers.delete(peerId);
-    void recoverPeer(peerId, reason);
+    void recoverPeer(peerId, reason, metrics.reconnectAttempts);
   }, delayMs);
   peerRecoveryTimers.set(peerId, timer);
 }
 
-async function recoverPeer(peerId: string, reason: string): Promise<void> {
+async function recoverPeer(peerId: string, reason: string, reconnectAttempts: number): Promise<void> {
   try {
     const offer = await mesh?.createOffer(peerId, true);
     if (offer) {
       signaling.send({ type: 'signal.offer', targetId: peerId, payload: offer });
-      gaga.emit('gaga:peer-recovery-started', { peerId, reason });
+      gaga.emit('gaga:peer-recovery-started', { peerId, reason, reconnectAttempts });
+      logClientEvent('webrtc.recovery_started', { peerId, reason, reconnectAttempts });
+      return;
     }
+    gaga.emit('gaga:peer-recovery-failed', { peerId, reason: 'peer-manager-unavailable', reconnectAttempts });
+    logClientEvent('webrtc.recovery_failed', { peerId, reason: 'peer-manager-unavailable', reconnectAttempts });
   } catch {
-    gaga.emit('gaga:peer-recovery-failed', { peerId, reason });
+    gaga.emit('gaga:peer-recovery-failed', { peerId, reason, reconnectAttempts });
+    logClientEvent('webrtc.recovery_failed', { peerId, reason, reconnectAttempts });
   }
+}
+
+function handlePeerIceConnectionState(peerId: string, state: RTCIceConnectionState): void {
+  const metrics = recordPeerIceState(peerId, state);
+  const failureReason = iceFailureReason(state);
+  gaga.emit('gaga:peer-ice-state', {
+    peerId,
+    state,
+    failureReason,
+    reconnectAttempts: metrics.reconnectAttempts,
+    timeline: metrics.iceTimeline.join(',')
+  });
+  logClientEvent('webrtc.ice_state', { peerId, state, failureReason, reconnectAttempts: metrics.reconnectAttempts });
+}
+
+function recordPeerConnectionState(peerId: string, state: RTCPeerConnectionState): PeerMetrics {
+  const metrics = metricsForPeer(peerId);
+  pushTimeline(metrics.connectionTimeline, metrics.startedAt, state);
+  return metrics;
+}
+
+function recordPeerIceState(peerId: string, state: RTCIceConnectionState): PeerMetrics {
+  const metrics = metricsForPeer(peerId);
+  pushTimeline(metrics.iceTimeline, metrics.startedAt, state);
+  return metrics;
+}
+
+function metricsForPeer(peerId: string): PeerMetrics {
+  const existing = peerMetrics.get(peerId);
+  if (existing) return existing;
+  const created: PeerMetrics = {
+    startedAt: Date.now(),
+    connectionTimeline: [],
+    iceTimeline: [],
+    reconnectAttempts: 0
+  };
+  peerMetrics.set(peerId, created);
+  return created;
+}
+
+function pushTimeline(timeline: string[], startedAt: number, state: string): void {
+  timeline.push(`${state}@${Date.now() - startedAt}`);
+  if (timeline.length > 12) timeline.shift();
+}
+
+function iceFailureReason(state: RTCIceConnectionState): string {
+  if (state === 'failed') return navigator.onLine ? 'ice-negotiation-failed' : 'browser-offline';
+  if (state === 'disconnected') return navigator.onLine ? 'ice-disconnected' : 'browser-offline';
+  return 'none';
+}
+
+function logClientEvent(event: string, detail: Record<string, string | number | boolean>): void {
+  console.info(JSON.stringify({ ts: new Date().toISOString(), event, ...detail }));
 }
 
 async function loadIceServers(): Promise<RTCIceServer[]> {

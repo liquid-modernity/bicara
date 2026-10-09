@@ -3,6 +3,9 @@ import type { ClientSignalMessage, ServerSignalMessage } from '@live-voice/share
 type MessageHandler = (message: ServerSignalMessage) => void;
 type StateHandler = (state: 'connecting' | 'open' | 'closed' | 'reconnecting' | 'failed') => void;
 
+const HEARTBEAT_INTERVAL_MS = 20_000;
+const HEARTBEAT_TIMEOUT_MS = 45_000;
+
 export interface SignalingConnectOptions {
   baseUrl: string;
   roomId: string;
@@ -16,6 +19,8 @@ export class SignalingClient {
   private messageHandlers = new Set<MessageHandler>();
   private stateHandlers = new Set<StateHandler>();
   private reconnectTimer: number | undefined;
+  private heartbeatTimer: number | undefined;
+  private lastPongAt = 0;
   private reconnectAttempts = 0;
   private intentionalClose = false;
 
@@ -45,6 +50,7 @@ export class SignalingClient {
     this.intentionalClose = true;
     if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
+    this.stopHeartbeat();
     this.socket?.close(1000, 'client_leave');
     this.socket = undefined;
     this.emitState('closed');
@@ -62,6 +68,8 @@ export class SignalingClient {
     socket.addEventListener('open', () => {
       if (socket !== this.socket) return;
       this.reconnectAttempts = 0;
+      this.lastPongAt = Date.now();
+      this.startHeartbeat(socket);
       this.emitState('open');
     });
 
@@ -69,6 +77,7 @@ export class SignalingClient {
       if (socket !== this.socket || typeof event.data !== 'string') return;
       try {
         const message = JSON.parse(event.data) as ServerSignalMessage;
+        if (message.type === 'pong') this.lastPongAt = Date.now();
         this.messageHandlers.forEach((handler) => handler(message));
       } catch {
         // Ignore malformed server payloads. The worker validates protocol messages.
@@ -77,6 +86,7 @@ export class SignalingClient {
 
     socket.addEventListener('close', () => {
       if (socket !== this.socket) return;
+      this.stopHeartbeat();
       this.emitState('closed');
       if (!this.intentionalClose) this.scheduleReconnect();
     });
@@ -99,6 +109,23 @@ export class SignalingClient {
     const jitter = Math.floor(Math.random() * 400);
     this.emitState('reconnecting');
     this.reconnectTimer = window.setTimeout(() => this.openSocket(true), base + jitter);
+  }
+
+  private startHeartbeat(socket: WebSocket): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = window.setInterval(() => {
+      if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - this.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+        socket.close(4000, 'heartbeat_timeout');
+        return;
+      }
+      socket.send(JSON.stringify({ type: 'ping', payload: { at: Date.now() } }));
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) window.clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = undefined;
   }
 
   private buildUrl(options: SignalingConnectOptions): string {

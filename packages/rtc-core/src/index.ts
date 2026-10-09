@@ -4,6 +4,7 @@ export interface PeerCallbacks {
   sendIce: (targetId: string, candidate: RTCIceCandidateInit) => void;
   onRemoteStream: (peerId: string, stream: MediaStream) => void;
   onConnectionState: (peerId: string, state: RTCPeerConnectionState) => void;
+  onIceConnectionState: (peerId: string, state: RTCIceConnectionState) => void;
 }
 
 interface PeerRecord {
@@ -202,6 +203,10 @@ export class MeshPeerManager {
 
     connection.addEventListener('connectionstatechange', () => {
       this.callbacks.onConnectionState(peerId, connection.connectionState);
+    });
+
+    connection.addEventListener('iceconnectionstatechange', () => {
+      this.callbacks.onIceConnectionState(peerId, connection.iceConnectionState);
     });
 
     return record;

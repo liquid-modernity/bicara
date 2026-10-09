@@ -26,44 +26,62 @@ const MAX_MESSAGE_BYTES = 96 * 1024;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    const cors = corsHeaders(request, env);
+    try {
+      const url = new URL(request.url);
+      const cors = corsHeaders(request, env);
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: cors });
-    }
-
-    if (url.pathname === '/health') {
-      return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.6' }, { headers: cors });
-    }
-
-    if (url.pathname === '/turn') {
-      if (!originAllowed(request, env)) return jsonError('ORIGIN_NOT_ALLOWED', 403, cors);
-      return turnConfiguration(env, cors);
-    }
-
-    if (url.pathname === '/signal') {
-      if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
-        return jsonError('WEBSOCKET_REQUIRED', 426, cors);
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: cors });
       }
-      if (!originAllowed(request, env)) return jsonError('ORIGIN_NOT_ALLOWED', 403, cors);
 
-      const roomId = normalizeRoomId(url.searchParams.get('room') ?? '');
-      const participantId = normalizeParticipantId(url.searchParams.get('participant') ?? '');
-      const displayName = normalizeDisplayName(url.searchParams.get('name') ?? '');
-      if (!roomId || !participantId || !displayName) return jsonError('INVALID_JOIN', 400, cors);
+      if (url.pathname === '/health') {
+        return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.7' }, { headers: cors });
+      }
 
-      const room = env.ROOMS.getByName(roomId);
-      const forwarded = new URL(request.url);
-      forwarded.pathname = '/internal/connect';
-      forwarded.searchParams.set('room', roomId);
-      forwarded.searchParams.set('participant', participantId);
-      forwarded.searchParams.set('name', displayName);
-      forwarded.searchParams.set('max', String(maxParticipants(env)));
-      return room.fetch(new Request(forwarded, request));
+      if (url.pathname === '/turn') {
+        if (!originAllowed(request, env)) {
+          logWorkerEvent('worker.origin_denied', { path: url.pathname, origin: request.headers.get('Origin') ?? 'missing' });
+          return jsonError('ORIGIN_NOT_ALLOWED', 403, cors);
+        }
+        return turnConfiguration(env, cors);
+      }
+
+      if (url.pathname === '/signal') {
+        if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+          return jsonError('WEBSOCKET_REQUIRED', 426, cors);
+        }
+        if (!originAllowed(request, env)) {
+          logWorkerEvent('worker.origin_denied', { path: url.pathname, origin: request.headers.get('Origin') ?? 'missing' });
+          return jsonError('ORIGIN_NOT_ALLOWED', 403, cors);
+        }
+
+        const roomId = normalizeRoomId(url.searchParams.get('room') ?? '');
+        const participantId = normalizeParticipantId(url.searchParams.get('participant') ?? '');
+        const displayName = normalizeDisplayName(url.searchParams.get('name') ?? '');
+        if (!roomId || !participantId || !displayName) {
+          logWorkerEvent('worker.invalid_join', {
+            hasRoom: Boolean(roomId),
+            hasParticipant: Boolean(participantId),
+            hasDisplayName: Boolean(displayName)
+          });
+          return jsonError('INVALID_JOIN', 400, cors);
+        }
+
+        const room = env.ROOMS.getByName(roomId);
+        const forwarded = new URL(request.url);
+        forwarded.pathname = '/internal/connect';
+        forwarded.searchParams.set('room', roomId);
+        forwarded.searchParams.set('participant', participantId);
+        forwarded.searchParams.set('name', displayName);
+        forwarded.searchParams.set('max', String(maxParticipants(env)));
+        return room.fetch(new Request(forwarded, request));
+      }
+
+      return new Response('Not found', { status: 404, headers: cors });
+    } catch (error) {
+      logWorkerEvent('worker.error', { reason: errorReason(error) });
+      return Response.json({ error: 'INTERNAL_ERROR' }, { status: 500, headers: JSON_HEADERS });
     }
-
-    return new Response('Not found', { status: 404, headers: cors });
   }
 };
 
@@ -80,7 +98,7 @@ export class VoiceRoom extends DurableObject<Env> {
     const max = clamp(Number(url.searchParams.get('max') ?? '10'), 2, 25);
     if (!roomId || !participantId || !displayName) return new Response('Invalid join', { status: 400 });
 
-    const current = this.ctx.getWebSockets(roomId);
+    const current = this.closeStaleSockets(roomId, this.ctx.getWebSockets(roomId));
     const duplicate = current.find((socket) =>
       socket.readyState === WebSocket.OPEN && socketAttachment(socket)?.participantId === participantId
     );
@@ -92,6 +110,7 @@ export class VoiceRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, [roomId]);
 
     if (activeOthers.length >= max) {
+      logWorkerEvent('room.full', { roomId, participantCount: activeOthers.length, max });
       safeSend(server, {
         type: 'error',
         code: 'ROOM_FULL',
@@ -114,7 +133,10 @@ export class VoiceRoom extends DurableObject<Env> {
 
     // Register the replacement before closing the old socket so the close handler
     // can see the replacement and does not broadcast a false participant.left.
-    if (duplicate) duplicate.close(4001, 'replaced_by_reconnect');
+    if (duplicate) {
+      logWorkerEvent('participant.replaced', { roomId, participantId });
+      duplicate.close(4001, 'replaced_by_reconnect');
+    }
 
     const existingParticipants = this.ctx.getWebSockets(roomId)
       .filter((socket) => socket !== server
@@ -129,6 +151,14 @@ export class VoiceRoom extends DurableObject<Env> {
       participants: existingParticipants.map(publicParticipant)
     });
 
+    if (activeOthers.length === 0 && !duplicate) logWorkerEvent('room.created', { roomId });
+    logWorkerEvent('participant.joined', {
+      roomId,
+      participantId,
+      participantCount: activeOthers.length + 1,
+      reconnect: Boolean(duplicate)
+    });
+
     this.broadcast(roomId, {
       type: 'participant.joined',
       participant: publicParticipant(attachment)
@@ -139,9 +169,13 @@ export class VoiceRoom extends DurableObject<Env> {
 
   webSocketMessage(socket: WebSocket, raw: string | ArrayBuffer): void {
     const attachment = socketAttachment(socket);
-    if (!attachment) return socket.close(4002, 'invalid_session');
+    if (!attachment) {
+      logWorkerEvent('worker.error', { reason: 'invalid_session' });
+      return socket.close(4002, 'invalid_session');
+    }
 
     if (typeof raw !== 'string' || new TextEncoder().encode(raw).byteLength > MAX_MESSAGE_BYTES) {
+      logWorkerEvent('worker.invalid_message', { roomId: attachment.roomId, participantId: attachment.participantId, reason: 'size_or_type' });
       return socket.close(4003, 'invalid_message');
     }
 
@@ -149,10 +183,12 @@ export class VoiceRoom extends DurableObject<Env> {
     try {
       message = JSON.parse(raw) as ClientMessage;
     } catch {
+      logWorkerEvent('worker.invalid_message', { roomId: attachment.roomId, participantId: attachment.participantId, reason: 'json' });
       return safeSend(socket, { type: 'error', code: 'INVALID_JSON', message: 'Invalid JSON payload.', recoverable: true });
     }
 
     if (!isClientMessage(message)) {
+      logWorkerEvent('worker.invalid_message', { roomId: attachment.roomId, participantId: attachment.participantId, reason: 'schema' });
       return safeSend(socket, { type: 'error', code: 'INVALID_MESSAGE', message: 'Unsupported signaling message.', recoverable: true });
     }
 
@@ -179,6 +215,7 @@ export class VoiceRoom extends DurableObject<Env> {
 
     const target = this.findParticipant(attachment.roomId, message.targetId);
     if (!target) {
+      logWorkerEvent('worker.target_missing', { roomId: attachment.roomId, participantId: attachment.participantId, targetId: message.targetId });
       safeSend(socket, { type: 'error', code: 'TARGET_NOT_FOUND', message: 'Target participant is no longer connected.', recoverable: true });
       return;
     }
@@ -196,6 +233,12 @@ export class VoiceRoom extends DurableObject<Env> {
   }
 
   webSocketError(socket: WebSocket): void {
+    const attachment = socketAttachment(socket);
+    logWorkerEvent('worker.error', {
+      reason: 'websocket_error',
+      roomId: attachment?.roomId ?? 'unknown',
+      participantId: attachment?.participantId ?? 'unknown'
+    });
     this.broadcastDepartureUnlessReplaced(socket);
     socket.close(1011, 'websocket_error');
   }
@@ -211,8 +254,27 @@ export class VoiceRoom extends DurableObject<Env> {
         && socketAttachment(candidate)?.participantId === attachment.participantId);
 
     if (!replacementExists) {
+      logWorkerEvent('participant.left', { roomId: attachment.roomId, participantId: attachment.participantId });
       this.broadcast(attachment.roomId, { type: 'participant.left', participantId: attachment.participantId }, socket);
     }
+  }
+
+  private closeStaleSockets(roomId: string, sockets: WebSocket[]): WebSocket[] {
+    const active: WebSocket[] = [];
+    for (const socket of sockets) {
+      if (socket.readyState === WebSocket.OPEN) {
+        active.push(socket);
+        continue;
+      }
+      const attachment = socketAttachment(socket);
+      logWorkerEvent('participant.stale_socket_closed', {
+        roomId,
+        participantId: attachment?.participantId ?? 'unknown',
+        readyState: socket.readyState
+      });
+      socket.close(4005, 'stale_socket');
+    }
+    return active;
   }
 
   private findParticipant(roomId: string, participantId: string): WebSocket | undefined {
@@ -306,16 +368,23 @@ async function turnConfiguration(env: Env, headers: HeadersInit): Promise<Respon
   }
 
   const ttl = clamp(Number(env.TURN_TTL_SECONDS ?? '43200'), 3600, 86400);
-  const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({ ttl })
-  });
+  let response: Response;
+  try {
+    response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ ttl })
+    });
+  } catch (error) {
+    logWorkerEvent('worker.error', { reason: 'turn_fetch_failed', detail: errorReason(error) });
+    return Response.json({ iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }] }, { status: 200, headers });
+  }
 
   if (!response.ok) {
+    logWorkerEvent('worker.error', { reason: 'turn_credentials_rejected', status: response.status });
     return Response.json({ iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }] }, { status: 200, headers });
   }
 
@@ -374,4 +443,17 @@ function normalizeDisplayName(value: string): string {
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function logWorkerEvent(event: string, detail: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({
+    ts: new Date().toISOString(),
+    service: 'live-voice-signaling',
+    event,
+    ...detail
+  }));
+}
+
+function errorReason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

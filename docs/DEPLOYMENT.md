@@ -29,7 +29,7 @@ GET https://<worker-domain>/health
 Expected shape:
 
 ```json
-{ "ok": true, "service": "live-voice-signaling", "version": "0.0.6" }
+{ "ok": true, "service": "live-voice-signaling", "version": "0.0.7" }
 ```
 
 Same-origin Worker deployments are allowed automatically. Set Worker variable `ALLOWED_ORIGINS` only when the frontend is served from a different HTTPS origin. Multiple origins may be comma-separated. The checked-in default permits localhost development only.
