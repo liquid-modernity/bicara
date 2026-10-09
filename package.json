@@ -12,7 +12,7 @@
     "dev": "pnpm --filter @live-voice/web dev",
     "dev:web": "pnpm --filter @live-voice/web dev",
     "dev:worker": "pnpm --filter @live-voice/signaling-worker dev",
-    "build": "pnpm --filter @live-voice/web build && pnpm --filter @live-voice/signaling-worker build",
+    "build": "pnpm -r build",
     "build:web": "pnpm --filter @live-voice/web build",
     "build:worker": "pnpm --filter @live-voice/signaling-worker build",
     "typecheck": "pnpm -r typecheck",
