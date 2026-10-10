@@ -13,8 +13,14 @@ import { SignalingClient } from '@live-voice/signaling-client';
 import {
   applyFacilitationAction,
   canFacilitate,
+  addMemoryMoment,
+  addMemoryParticipant,
+  completeSessionMemory,
   createFacilitationState,
+  createSessionMemory,
+  createSessionSummary,
   createSocialRoomEvent,
+  createTimelineMoment,
   defaultConversationGroup,
   createRoomIdentity,
   defaultRoomRole,
@@ -24,6 +30,8 @@ import {
   participantPresence,
   qualityPolicy,
   qualityFromScore,
+  recentSessionFromSummary,
+  rememberRecentSession,
   roomActivityState,
   roomModeProfile,
   roomPulse,
@@ -32,12 +40,15 @@ import {
   type AdaptivePresence,
   type FacilitationAction,
   type FacilitationState,
+  type RecentSession,
   type RoomActivityState,
   type RoomIdentity,
   type RoomMode,
   type RoomRole,
+  type SessionMemory,
   type SocialRoomEvent,
-  type SocialRoomEventType
+  type SocialRoomEventType,
+  type ActivityMomentType
 } from '@live-voice/voice-domain';
 import { createTranslator, detectLocale, type Locale, type TranslationKey } from '../lib/i18n';
 
@@ -53,6 +64,8 @@ const joinForm = $('#join-form') as HTMLFormElement;
 const nameInput = $('#display-name') as HTMLInputElement;
 const roomInput = $('#room-id') as HTMLInputElement;
 const joinButton = $('#join-button') as HTMLButtonElement;
+const recentSessionsWrap = $('#recent-sessions-wrap');
+const recentSessionsList = $('#recent-sessions');
 const muteButton = $('#mute-button') as HTMLButtonElement;
 const leaveButton = $('#leave-button') as HTMLButtonElement;
 const pttButton = $('#ptt-button') as HTMLButtonElement;
@@ -84,6 +97,7 @@ const openDiscussionButton = $('#open-discussion-button') as HTMLButtonElement;
 const quietRoomButton = $('#quiet-room-button') as HTMLButtonElement;
 const endSessionButton = $('#end-session-button') as HTMLButtonElement;
 const socialEventsList = $('#social-events');
+const sessionStoryLabel = $('#session-story');
 const diagnosticsPanel = document.querySelector<HTMLPreElement>('#diagnostics-panel');
 
 const DIAGNOSTICS_ENABLED = import.meta.env.DEV;
@@ -91,6 +105,7 @@ const PARTICIPANT_RECONNECT_GRACE_MS = 15_000;
 const ADAPTIVE_AUDIO_COOLDOWN_MS = 8_000;
 const SESSION_END_DELAY_MS = 3_000;
 const MAX_SOCIAL_EVENTS = 4;
+const RECENT_SESSIONS_KEY = 'live-voice-recent-sessions';
 const SIGNALING_URL = resolveSignalingUrl();
 const DEFAULT_ROOM = normalizeRoomId(import.meta.env.PUBLIC_DEFAULT_ROOM || 'general') || 'general';
 const configuredMaxParticipants = Number(import.meta.env.PUBLIC_MAX_PARTICIPANTS || '10');
@@ -112,6 +127,8 @@ let roomMode: RoomMode = normalizeRoomMode(localStorage.getItem('live-voice-room
 let roomIdentity: RoomIdentity = createRoomIdentity(DEFAULT_ROOM, roomMode, Date.now());
 let facilitationState: FacilitationState = createFacilitationState('host');
 let currentActivityState: RoomActivityState = 'preparing';
+let sessionMemory: SessionMemory = createSessionMemory(DEFAULT_ROOM);
+let recentSessions: RecentSession[] = [];
 let participants = new Map<string, Participant>();
 let participantRoles = new Map<string, RoomRole>();
 let socialEvents: SocialRoomEvent[] = [];
@@ -184,7 +201,9 @@ function setupInitialState(): void {
   modeSelect.value = mode;
   roomModeSelect.value = roomMode;
   localeSelect.value = locale;
+  recentSessions = loadRecentSessions();
   updateOnlineState();
+  renderRecentSessions();
 }
 
 function setupEvents(): void {
@@ -316,6 +335,7 @@ async function joinRoom(): Promise<void> {
   displayName = normalizeDisplayName(nameInput.value);
   roomId = normalizeRoomId(roomInput.value);
   roomIdentity = createRoomIdentity(roomId || DEFAULT_ROOM, roomMode, Date.now());
+  sessionMemory = createSessionMemory(roomId || DEFAULT_ROOM);
 
   if (!displayName) {
     recordJoinFailure('display-name');
@@ -369,6 +389,7 @@ async function joinRoom(): Promise<void> {
     lastSocialEvent = undefined;
     currentActivityState = 'preparing';
     facilitationState = createFacilitationState('host');
+    sessionMemory = addMemoryParticipant(sessionMemory, displayName);
     peerMetrics.clear();
     peerQualityState.clear();
     remoteVolumes.clear();
@@ -388,6 +409,7 @@ async function joinRoom(): Promise<void> {
     participants.set(participantId, localParticipant());
     participantRoles.set(participantId, facilitationState.localRole);
     gaga.emit('gaga:voice.participant.joining', { roomId, participantId });
+    gaga.emit('gaga:session.memory.created', { roomId, participantId, sessionId: sessionMemory.sessionId });
 
     stopSpeakingMonitor?.();
     stopSpeakingMonitor = voice.monitorLocalSpeaking((active) => {
@@ -435,6 +457,7 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
       participantRoles = new Map([[participantId, localRole]]);
       participants = new Map([[participantId, localParticipant()]]);
       for (const participant of message.participants) upsertRemoteParticipant(participant);
+      sessionMemory = addTimelineMoment(sessionMemory, 'participant-joined', `${displayName} ${t('eventJoined')}`, false, roomMetrics.roomStartedAt);
       setConnectionStatus('connected');
       gaga.emit('gaga:voice.participant.connected', { roomId, participantId });
       gaga.emit('gaga:participant.role.changed', { roomId, participantId, role: localRole });
@@ -460,6 +483,9 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
         conversationGroupId: conversationGroup.id,
         conversationParticipants: conversationGroup.participants.length
       });
+      if (message.participants.length > 0) {
+        showSoftStatus(message.participants.some((participant) => participant.speaking) ? t('conversationAlreadyActive') : t('welcomeBack'));
+      }
       logRoomMetrics('room.joined');
       render();
       break;
@@ -506,6 +532,7 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
 
 function leaveRoom(updateUi = true): void {
   if (roomMetrics.joinAttempts > 0 || participants.size > 0) logRoomMetrics('room.left');
+  if (participants.size > 0 && sessionMemory.activityTimeline.length > 0) completeCurrentSession();
   signaling.send({ type: 'room.leave' });
   signaling.close();
   mesh?.closeAll();
@@ -530,6 +557,7 @@ function leaveRoom(updateUi = true): void {
   lastSocialEvent = undefined;
   currentActivityState = 'preparing';
   facilitationState = createFacilitationState('host');
+  sessionMemory = createSessionMemory(DEFAULT_ROOM);
   peerMetrics.clear();
   peerQualityState.clear();
   remoteVolumes.clear();
@@ -599,6 +627,7 @@ function upsertRemoteParticipant(remote: SignalingParticipant): void {
     participantRoles.set(remote.id, role);
     gaga.emit('gaga:participant.role.changed', { roomId, participantId: remote.id, role });
   }
+  sessionMemory = addMemoryParticipant(sessionMemory, remote.displayName);
   peerQualityState.delete(remote.id);
   if (wasRecovering) {
     markParticipantReturning(remote.id);
@@ -1143,7 +1172,7 @@ function handleFacilitation(action: FacilitationAction): void {
   gaga.emit(eventName, { roomId, participantId, action, sessionState: facilitationState.sessionState });
   logClientEvent(eventName.replace('gaga:', ''), { roomId, participantId, action, sessionState: facilitationState.sessionState });
   if (action === 'start-session') addSocialEvent('session-started', t('eventStarted'));
-  if (action === 'open-discussion') addSocialEvent('conversation-started', t('eventConversationStarted'));
+  if (action === 'open-discussion') addSocialEvent('discussion-opened', t('eventDiscussionOpened'));
   if (action === 'quiet-room') addSocialEvent('room-quiet', t('eventRoomQuiet'));
   if (action === 'end-session') {
     addSocialEvent('session-ending', t('eventEnding'));
@@ -1151,6 +1180,7 @@ function handleFacilitation(action: FacilitationAction): void {
       facilitationState = { ...facilitationState, sessionState: 'ended', updatedAt: Date.now() };
       sessionEndTimer = undefined;
       gaga.emit('gaga:room.activity.changed', { roomId, participantId, activity: 'ended' });
+      completeCurrentSession();
       render();
     }, SESSION_END_DELAY_MS);
   }
@@ -1162,7 +1192,31 @@ function addSocialEvent(type: SocialRoomEventType, message: string): void {
   if (!shouldShowSocialEvent(lastSocialEvent, event)) return;
   lastSocialEvent = event;
   socialEvents = [event, ...socialEvents].slice(0, MAX_SOCIAL_EVENTS);
+  sessionMemory = addTimelineMoment(sessionMemory, timelineType(type), message, type !== 'participant-joined', event.createdAt);
   renderSocialEvents();
+}
+
+function addTimelineMoment(memory: SessionMemory, type: ActivityMomentType, label: string, keyMoment = false, at = Date.now()): SessionMemory {
+  const nextMemory = addMemoryMoment(memory, createTimelineMoment(type, label, at), keyMoment);
+  if (nextMemory !== memory) {
+    gaga.emit('gaga:session.timeline.updated', {
+      roomId,
+      participantId,
+      sessionId: nextMemory.sessionId,
+      momentType: type,
+      momentCount: nextMemory.activityTimeline.length
+    });
+  }
+  return nextMemory;
+}
+
+function timelineType(type: SocialRoomEventType): ActivityMomentType {
+  if (type === 'participant-joined' || type === 'participant-returned') return 'participant-joined';
+  if (type === 'session-started') return 'session-started';
+  if (type === 'discussion-opened') return 'discussion-opened';
+  if (type === 'conversation-started') return 'conversation-active';
+  if (type === 'room-quiet') return 'room-quiet';
+  return 'session-ended';
 }
 
 function render(): void {
@@ -1172,6 +1226,7 @@ function render(): void {
   renderParticipants();
   renderRoomPulse();
   renderSocialEvents();
+  renderSessionStory();
 }
 
 function renderRoomIdentity(): void {
@@ -1366,6 +1421,86 @@ function renderSocialEvents(): void {
   }
 }
 
+function renderSessionStory(): void {
+  const summary = createSessionSummary(sessionMemory);
+  const minutes = Math.max(0, Math.round(summary.durationMs / 60_000));
+  const duration = minutes > 0 ? `${minutes} ${t('minutesShort')}` : t('justStarted');
+  sessionStoryLabel.textContent = `${duration} · ${summary.participationMoments} ${t('storyMoments')}`;
+}
+
+function completeCurrentSession(): void {
+  if (sessionMemory.endedAt) return;
+  const endedMemory = completeSessionMemory(
+    addTimelineMoment(sessionMemory, 'session-ended', t('eventEnded'), true),
+    Date.now()
+  );
+  sessionMemory = endedMemory;
+  const summary = createSessionSummary(endedMemory);
+  const recent = recentSessionFromSummary(summary, {
+    roomName: roomIdentity.name,
+    purpose: roomIdentity.purpose,
+    mode: roomIdentity.mode
+  });
+  recentSessions = rememberRecentSession(recentSessions, recent);
+  saveRecentSessions(recentSessions);
+  gaga.emit('gaga:session.completed', {
+    roomId,
+    participantId,
+    sessionId: summary.sessionId,
+    durationMs: summary.durationMs,
+    participantCount: summary.participantCount,
+    participationMoments: summary.participationMoments
+  });
+  renderRecentSessions();
+}
+
+function renderRecentSessions(): void {
+  recentSessionsList.replaceChildren();
+  recentSessionsWrap.hidden = recentSessions.length === 0;
+  for (const session of recentSessions) {
+    const item = document.createElement('li');
+    const name = document.createElement('strong');
+    name.textContent = session.roomName || t('previousWorkshop');
+    const detail = document.createElement('span');
+    detail.textContent = `${relativeSessionDay(session.endedAt)} · ${session.participantCount} ${t('peopleHere')} · ${Math.max(1, Math.round(session.durationMs / 60_000))} ${t('minutesShort')} · ${session.peakActivity}`;
+    item.append(name, detail);
+    recentSessionsList.append(item);
+  }
+}
+
+function loadRecentSessions(): RecentSession[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_SESSIONS_KEY) || '[]') as RecentSession[];
+    return Array.isArray(parsed) ? parsed.filter(isRecentSession).slice(0, 5) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentSessions(sessions: RecentSession[]): void {
+  localStorage.setItem(RECENT_SESSIONS_KEY, JSON.stringify(sessions.slice(0, 5)));
+}
+
+function isRecentSession(value: unknown): value is RecentSession {
+  if (!value || typeof value !== 'object') return false;
+  const session = value as Partial<RecentSession>;
+  return typeof session.sessionId === 'string'
+    && typeof session.roomId === 'string'
+    && typeof session.roomName === 'string'
+    && typeof session.durationMs === 'number'
+    && typeof session.participantCount === 'number';
+}
+
+function relativeSessionDay(endedAt: number): string {
+  const now = new Date();
+  const ended = new Date(endedAt);
+  if (now.toDateString() === ended.toDateString()) return t('today');
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (yesterday.toDateString() === ended.toDateString()) return t('yesterday');
+  return ended.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+}
+
 function presenceGlyph(presence: AdaptivePresence): string {
   if (presence === 'speaking') return '◉';
   if (presence === 'quiet') return '○';
@@ -1392,6 +1527,7 @@ function renderStaticText(): void {
   installButton.textContent = t('install');
   localeSelect.setAttribute('aria-label', t('language'));
   capacityLabel.textContent = `max ${MAX_PARTICIPANTS}`;
+  renderRecentSessions();
 }
 
 async function copyRoomLink(): Promise<void> {

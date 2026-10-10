@@ -146,6 +146,11 @@ h1 { margin: .55rem 0 .7rem; font-size: clamp(2rem, 5vw, 3.25rem); line-height: 
 .gaga-button--quiet { min-height: 38px; font-size: .84rem; }
 .gaga-privacy-note, .gaga-hint { margin: 1.25rem 0 0; color: var(--gaga-text-muted); font-size: .78rem; line-height: 1.55; }
 .gaga-error { margin-top: 1rem; border: 1px solid rgba(255, 123, 130, .3); border-radius: 12px; padding: .8rem 1rem; color: #ffd3d6; background: rgba(255, 123, 130, .08); line-height: 1.45; }
+.gaga-recent-sessions { margin-top: 1.3rem; border-top: 1px solid var(--gaga-border); padding-top: 1rem; }
+.gaga-recent-sessions ul { list-style: none; margin: .7rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.gaga-recent-sessions li { display: grid; gap: .18rem; border: 1px solid var(--gaga-border); border-radius: 12px; padding: .7rem .8rem; background: rgba(3, 13, 24, .28); }
+.gaga-recent-sessions strong { font-size: .85rem; }
+.gaga-recent-sessions span { color: var(--gaga-text-muted); font-size: .73rem; line-height: 1.4; }
 
 .gaga-room-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 1rem; align-items: start; }
 .gaga-room-main { padding: clamp(1.25rem, 3vw, 2rem); }

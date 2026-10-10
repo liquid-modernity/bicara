@@ -3,6 +3,7 @@ export type SocialRoomEventType =
   | 'participant-returned'
   | 'session-started'
   | 'session-ending'
+  | 'discussion-opened'
   | 'conversation-started'
   | 'room-quiet';
 

@@ -1,4 +1,4 @@
-# Live Voice v1.3.0
+# Live Voice v1.4.0
 
 Guest-first browser-native realtime voice rooms built from the supplied Live Voice PRD, TAD, UX, API, repository, and milestone materials.
 
@@ -128,6 +128,8 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - host facilitation controls for starting sessions, opening discussion, quieting the room, and ending sessions locally
 - subtle social room events when people join, return, conversations start, or the room becomes quiet
 - expanded room mode semantics for open rooms, workshops, learning sessions, and gaming voice rooms
+- browser-local session memory with activity timeline, key moments, and non-AI session summaries
+- recent sessions that help rooms feel continuous without storing audio or transcription
 - WebSocket signaling reconnect with exponential backoff
 - deterministic WebRTC ICE restart after disconnected or failed peer connectivity
 - ICE candidate queueing before remote descriptions
@@ -141,6 +143,7 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - runtime-neutral signaling protocol shared between browser and Worker
 - GAGA capability inspection for the Live Voice browser-room capability
 - GAGA diagnostics for lifecycle, capability, participant, quality, recovery, and adaptive-audio events
+- GAGA diagnostics for local session memory creation, timeline updates, and completed sessions
 - GAGA browser lifecycle cleanup for long-lived frontend subscriptions
 - bounded server-side validation for SDP and ICE signaling payloads
 - persistent local language, mode, name, and audio-output preferences
