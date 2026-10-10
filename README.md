@@ -1,4 +1,4 @@
-# Live Voice v1.2.0
+# Live Voice v1.3.0
 
 Guest-first browser-native realtime voice rooms built from the supplied Live Voice PRD, TAD, UX, API, repository, and milestone materials.
 
@@ -120,10 +120,14 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - guest display name and room links, no account required
 - open microphone and push-to-talk modes
 - mute and unmute
-- participant presence and speaking state
+- participant presence, speaking state, and lightweight session roles
 - human participant states for joining, present, speaking, listening, quiet, unstable, reconnecting, returning, and left
 - lightweight room identity with human room name, purpose, mode, and creation time
 - Room Pulse social state for quiet rooms, active conversation, active speakers, everyone listening, and people returning
+- communal room activity states for preparing, gathering, active conversation, quiet rooms, closing, and ended sessions
+- host facilitation controls for starting sessions, opening discussion, quieting the room, and ending sessions locally
+- subtle social room events when people join, return, conversations start, or the room becomes quiet
+- expanded room mode semantics for open rooms, workshops, learning sessions, and gaming voice rooms
 - WebSocket signaling reconnect with exponential backoff
 - deterministic WebRTC ICE restart after disconnected or failed peer connectivity
 - ICE candidate queueing before remote descriptions
@@ -133,7 +137,6 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - selectable audio output where `setSinkId()` is supported
 - remote audio autoplay recovery button
 - normalized 0-100 connection quality score using RTT, packet loss, jitter, bitrate, and ICE state
-- lightweight room mode foundation for open, workshop, learning, and gaming rooms
 - server-side room capacity enforcement, default 10
 - runtime-neutral signaling protocol shared between browser and Worker
 - GAGA capability inspection for the Live Voice browser-room capability

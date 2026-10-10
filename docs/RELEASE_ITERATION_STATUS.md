@@ -1,7 +1,8 @@
-# Live Voice v1.2.0 Production Iteration
+# Live Voice v1.3.0 Production Iteration
 
 Changes applied:
-- Aligned release verification metadata with Live Voice v1.2.0.
+- Aligned release verification metadata with Live Voice v1.3.0.
+- Added lightweight communal room roles, activity states, facilitation controls, and social room events.
 - Restored verified GAGA dependency pin format.
 - Preserved Cloudflare Worker architecture.
 

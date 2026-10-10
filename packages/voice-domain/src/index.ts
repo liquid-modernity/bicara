@@ -1,9 +1,13 @@
 import type { ConnectionState, Participant, VoiceMode } from '@live-voice/shared-types';
+export * from './activity-state';
 export * from './conversation-state';
+export * from './facilitation';
 export * from './presence';
 export * from './quality-state';
 export * from './room-identity';
 export * from './room-mode';
+export * from './roles';
+export * from './social-events';
 
 export interface VoiceRoomState {
   connection: ConnectionState;

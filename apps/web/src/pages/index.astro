@@ -40,7 +40,7 @@ const description = 'Browser-native real-time voice rooms.';
 
     <main id="main" class="gaga-app-shell">
       <section id="join-view" class="gaga-panel gaga-join-panel" aria-labelledby="join-title">
-        <div class="gaga-eyebrow">LIVE VOICE 1.2</div>
+        <div class="gaga-eyebrow">LIVE VOICE 1.3</div>
         <h1 id="join-title" data-i18n="landingTitle">Masuk ke ruang suara</h1>
         <p class="gaga-lead" data-i18n="landingText">Masukkan nama dan ruang. Mikrofon hanya aktif setelah Anda memberikan izin.</p>
 
@@ -82,6 +82,11 @@ const description = 'Browser-native real-time voice rooms.';
               <div class="gaga-eyebrow" data-i18n="room">Ruang</div>
               <h1 id="room-title">general</h1>
               <p id="room-purpose" class="gaga-room-purpose">Open Conversation</p>
+              <p class="gaga-room-context">
+                <span id="room-activity">Preparing room</span>
+                <span aria-hidden="true">•</span>
+                <span id="room-count">1 person here</span>
+              </p>
             </div>
             <button id="copy-link" class="gaga-button gaga-button--quiet" type="button" data-i18n="copyLink">Salin tautan</button>
           </div>
@@ -94,6 +99,15 @@ const description = 'Browser-native real-time voice rooms.';
             <span class="gaga-status-item"><span data-i18n="roomPulse">Denyut ruang</span>: <strong id="room-pulse">Ruang tenang</strong></span>
             <span id="optimizing-label" class="gaga-status-pill" hidden data-i18n="optimizingVoice">Mengoptimalkan suara</span>
           </div>
+
+          <div id="facilitation-controls" class="gaga-facilitation-controls" aria-label="Kontrol sesi" data-i18n-aria="sessionControls" hidden>
+            <button id="start-session-button" class="gaga-mini-button" type="button" data-i18n="startSession">Mulai sesi</button>
+            <button id="open-discussion-button" class="gaga-mini-button" type="button" data-i18n="openDiscussion">Buka diskusi</button>
+            <button id="quiet-room-button" class="gaga-mini-button" type="button" data-i18n="quietRoomAction">Tenangkan ruang</button>
+            <button id="end-session-button" class="gaga-mini-button" type="button" data-i18n="endSession">Akhiri sesi</button>
+          </div>
+
+          <ul id="social-events" class="gaga-social-events" aria-live="polite"></ul>
 
           <div class="gaga-participant-section">
             <div class="gaga-section-title">
@@ -121,11 +135,11 @@ const description = 'Browser-native real-time voice rooms.';
             <strong>Jernih</strong>
           </div>
           <div class="gaga-side-stat">
-            <span>Room sync</span>
+            <span>Room</span>
             <strong>Bersama</strong>
           </div>
           <div class="gaga-side-stat">
-            <span>Care</span>
+            <span>Flow</span>
             <strong>Adaptive</strong>
           </div>
           <div class="gaga-side-divider"></div>
