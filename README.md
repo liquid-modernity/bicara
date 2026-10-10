@@ -1,4 +1,4 @@
-# Live Voice v1.0.0
+# Live Voice v1.1.0
 
 Guest-first browser-native realtime voice rooms built from the supplied Live Voice PRD, TAD, UX, API, repository, and milestone materials.
 
@@ -121,12 +121,13 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - open microphone and push-to-talk modes
 - mute and unmute
 - participant presence and speaking state
-- adaptive participant states for joining, connected, speaking, listening, muted, reconnecting, poor connection, and left
-- Room Pulse metadata for active speakers, quiet rooms, overlap count, and silence duration
+- human participant states for joining, present, speaking, listening, quiet, unstable, reconnecting, returning, and left
+- Room Pulse 2.0 social state for quiet rooms, active conversation, active speakers, and people returning
 - WebSocket signaling reconnect with exponential backoff
 - deterministic WebRTC ICE restart after disconnected or failed peer connectivity
 - ICE candidate queueing before remote descriptions
 - browser-native adaptive audio bitrate policy with cooldown and gradual restoration
+- human audio recovery language: optimizing voice and voice restored
 - selectable audio output where `setSinkId()` is supported
 - remote audio autoplay recovery button
 - normalized 0-100 connection quality score using RTT, packet loss, jitter, bitrate, and ICE state

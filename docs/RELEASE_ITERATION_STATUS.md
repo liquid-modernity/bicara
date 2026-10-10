@@ -1,7 +1,7 @@
-# Live Voice v1.0.0 Production Iteration
+# Live Voice v1.1.0 Production Iteration
 
 Changes applied:
-- Aligned release verification metadata with Live Voice v1.0.0.
+- Aligned release verification metadata with Live Voice v1.1.0.
 - Restored verified GAGA dependency pin format.
 - Preserved Cloudflare Worker architecture.
 

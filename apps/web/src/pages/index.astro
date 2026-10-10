@@ -2,7 +2,7 @@
 import '../styles/global.scss';
 
 const title = 'Live Voice';
-const description = 'Browser-native real-time voice rooms powered by WebRTC.';
+const description = 'Browser-native real-time voice rooms.';
 ---
 <!doctype html>
 <html lang="id-ID">
@@ -40,7 +40,7 @@ const description = 'Browser-native real-time voice rooms powered by WebRTC.';
 
     <main id="main" class="gaga-app-shell">
       <section id="join-view" class="gaga-panel gaga-join-panel" aria-labelledby="join-title">
-        <div class="gaga-eyebrow">LIVE VOICE 1.0</div>
+        <div class="gaga-eyebrow">LIVE VOICE 1.1</div>
         <h1 id="join-title" data-i18n="landingTitle">Masuk ke ruang suara</h1>
         <p class="gaga-lead" data-i18n="landingText">Masukkan nama dan ruang. Mikrofon hanya aktif setelah Anda memberikan izin.</p>
 
@@ -72,7 +72,7 @@ const description = 'Browser-native real-time voice rooms powered by WebRTC.';
         </form>
 
         <div id="error-box" class="gaga-error" role="alert" tabindex="-1" hidden></div>
-        <p class="gaga-privacy-note"><span aria-hidden="true">◌</span> <span data-i18n="privacy">Audio dikirim langsung melalui WebRTC. Signaling tidak membawa audio.</span></p>
+        <p class="gaga-privacy-note"><span aria-hidden="true">◌</span> <span data-i18n="privacy">Audio berjalan langsung antar peserta. Server hanya mengatur ruang.</span></p>
       </section>
 
       <section id="room-view" class="gaga-room-layout" aria-labelledby="room-title" hidden>
@@ -86,12 +86,12 @@ const description = 'Browser-native real-time voice rooms powered by WebRTC.';
           </div>
 
           <div class="gaga-status-strip" aria-live="polite">
-            <span class="gaga-status-item"><span class="gaga-status-dot" aria-hidden="true"></span><span data-i18n="connection">Koneksi</span>: <strong id="connection-status" data-state="connecting">Menghubungkan</strong></span>
+            <span class="gaga-status-item"><span class="gaga-status-dot" aria-hidden="true"></span><span data-i18n="connection">Status</span>: <strong id="connection-status" data-state="connecting">Menyiapkan</strong></span>
             <span class="gaga-status-divider" aria-hidden="true"></span>
-            <span class="gaga-status-item"><span data-i18n="quality">Kualitas</span>: <strong id="quality-status" data-quality="unknown">Belum tersedia</strong></span>
+            <span class="gaga-status-item"><span data-i18n="quality">Suara</span>: <strong id="quality-status" data-quality="unknown">Belum tersedia</strong></span>
             <span class="gaga-status-divider" aria-hidden="true"></span>
-            <span class="gaga-status-item"><span data-i18n="roomPulse">Denyut ruang</span>: <strong id="room-pulse">Tenang</strong></span>
-            <span id="optimizing-label" class="gaga-status-pill" hidden data-i18n="optimizingAudio">Mengoptimalkan audio</span>
+            <span class="gaga-status-item"><span data-i18n="roomPulse">Denyut ruang</span>: <strong id="room-pulse">Ruang tenang</strong></span>
+            <span id="optimizing-label" class="gaga-status-pill" hidden data-i18n="optimizingVoice">Mengoptimalkan suara</span>
           </div>
 
           <div class="gaga-participant-section">
@@ -117,15 +117,15 @@ const description = 'Browser-native real-time voice rooms powered by WebRTC.';
         <aside class="gaga-panel gaga-room-side" aria-label="Informasi ruang" data-i18n-aria="roomInformation">
           <div class="gaga-side-stat">
             <span>Audio</span>
-            <strong>Direct</strong>
+            <strong>Jernih</strong>
           </div>
           <div class="gaga-side-stat">
             <span>Room sync</span>
-            <strong>Live</strong>
+            <strong>Bersama</strong>
           </div>
           <div class="gaga-side-stat">
-            <span>Engine</span>
-            <strong>GAGA 0.1.6</strong>
+            <span>Care</span>
+            <strong>Adaptive</strong>
           </div>
           <div class="gaga-side-divider"></div>
           <pre id="diagnostics-panel" class="gaga-diagnostics" hidden aria-label="Diagnostics"></pre>
@@ -135,7 +135,7 @@ const description = 'Browser-native real-time voice rooms powered by WebRTC.';
               <option value="default" data-i18n="defaultOutput">Keluaran sistem</option>
             </select>
           </div>
-          <p data-i18n="privacy">Audio dikirim langsung melalui WebRTC. Signaling tidak membawa audio.</p>
+          <p data-i18n="privacy">Audio berjalan langsung antar peserta. Server hanya mengatur ruang.</p>
         </aside>
       </section>
     </main>

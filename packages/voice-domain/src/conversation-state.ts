@@ -9,7 +9,7 @@ export interface ConversationGroup {
   mode: RoomMode;
 }
 
-export type RoomPulse = 'quiet' | 'balanced' | 'active' | 'overlap' | 'reconnecting';
+export type RoomPulse = 'quiet-room' | 'conversation-active' | 'single-speaker' | 'multiple-speakers' | 'people-returning';
 
 export interface RoomPulseSnapshot {
   pulse: RoomPulse;
@@ -18,6 +18,7 @@ export interface RoomPulseSnapshot {
   silenceDurationMs: number;
   overlapCount: number;
   reconnectingParticipants: number;
+  returningParticipants: number;
   participantCount: number;
 }
 
@@ -43,18 +44,19 @@ export function roomPulse(participants: Participant[], mode: RoomMode, options: 
     .map((participant) => participant.id);
   const speakingCount = activeSpeakers.length;
   const reconnectingParticipants = participants.filter((participant) => participantPresence(participant) === 'reconnecting').length;
+  const returningParticipants = participants.filter((participant) => participantPresence(participant) === 'returning').length;
   const profile = roomModeProfile(mode);
   const now = options.now ?? Date.now();
   const silenceDurationMs = speakingCount === 0 && options.lastSpeakingAt ? Math.max(0, now - options.lastSpeakingAt) : 0;
   const pulse: RoomPulse = reconnectingParticipants > 0
-    ? 'reconnecting'
+    ? 'people-returning'
     : speakingCount === 0
-      ? 'quiet'
+      ? 'quiet-room'
       : speakingCount >= profile.overlapWarningThreshold
-        ? 'overlap'
+        ? 'multiple-speakers'
         : speakingCount === 1
-          ? 'balanced'
-          : 'active';
+          ? 'single-speaker'
+          : 'conversation-active';
 
   return {
     pulse,
@@ -63,6 +65,7 @@ export function roomPulse(participants: Participant[], mode: RoomMode, options: 
     silenceDurationMs,
     overlapCount: options.overlapCount ?? 0,
     reconnectingParticipants,
+    returningParticipants,
     participantCount: participants.length
   };
 }

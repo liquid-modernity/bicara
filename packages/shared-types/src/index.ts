@@ -13,6 +13,8 @@ export type AudioState =
   | 'speaking'
   | 'joining'
   | 'reconnecting'
+  | 'returning'
+  | 'unstable'
   | 'offline'
   | 'left'
   | 'poor-connection';
