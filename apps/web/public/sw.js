@@ -1,4 +1,4 @@
-const CACHE = 'live-voice-v1.4.0';
+const CACHE = 'live-voice-v1.5.0';
 const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {

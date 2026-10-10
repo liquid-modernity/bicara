@@ -215,6 +215,12 @@ h1 { margin: .55rem 0 .7rem; font-size: clamp(2rem, 5vw, 3.25rem); line-height: 
 .gaga-side-stat span { color: var(--gaga-text-muted); font-size: .71rem; text-transform: uppercase; letter-spacing: .08em; }
 .gaga-side-stat strong { font-size: .84rem; }
 .gaga-side-divider { height: 1px; margin: .8rem 0; background: var(--gaga-border); }
+.gaga-community-story { display: grid; gap: .45rem; }
+.gaga-community-story h2 { margin: 0; color: var(--gaga-text-muted); font-size: .71rem; text-transform: uppercase; letter-spacing: .08em; }
+.gaga-community-story strong { font-size: .9rem; }
+.gaga-community-story p { margin: 0; }
+.gaga-community-story ul { list-style: none; margin: .2rem 0 0; padding: 0; display: grid; gap: .35rem; color: var(--gaga-text-muted); font-size: .73rem; }
+.gaga-community-story li { border-left: 2px solid rgba(105, 230, 194, .32); padding-left: .5rem; }
 .gaga-diagnostics { max-height: 240px; overflow: auto; margin: 0 0 .8rem; border: 1px solid var(--gaga-border); border-radius: 10px; padding: .65rem; color: var(--gaga-text-muted); background: rgba(3, 13, 24, .42); font-size: .68rem; line-height: 1.45; white-space: pre-wrap; }
 
 @media (max-width: 780px) {

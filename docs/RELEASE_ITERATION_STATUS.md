@@ -1,8 +1,8 @@
-# Live Voice v1.4.0 Production Iteration
+# Live Voice v1.5.0 Production Iteration
 
 Changes applied:
-- Aligned release verification metadata with Live Voice v1.4.0.
-- Added browser-local community memory, activity timeline, session summary, and recent-session continuity.
+- Aligned release verification metadata with Live Voice v1.5.0.
+- Added browser-local participant memory, room lifecycle, community moments, room personality, and intelligence adapter contracts.
 - Restored verified GAGA dependency pin format.
 - Preserved Cloudflare Worker architecture.
 

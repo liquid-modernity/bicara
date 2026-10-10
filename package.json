@@ -1,6 +1,6 @@
 {
   "name": "live-voice",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Guest-first browser-native realtime voice rooms powered by Astro, WebRTC, GAGA Engine 0.1.6, and Cloudflare.",
   "license": "UNLICENSED",

@@ -23,7 +23,7 @@ The Live Voice product is an independent GAGA consumer. GAGA provides reusable c
 
 The bridge deliberately avoids the internal `@gaga/engine` and `@gaga/engine-web` package roots. WebRTC, Durable Object signaling, room roster policy, labels, routes, and UI state remain Live Voice responsibilities.
 
-For Live Voice 1.4, GAGA also acts as the intelligence boundary for browser capability detection, lifecycle cleanup, diagnostics, and normalized voice lifecycle events:
+For Live Voice 1.5, GAGA also acts as the intelligence boundary for browser capability detection, lifecycle cleanup, diagnostics, and normalized voice lifecycle events:
 
 - `gaga:voice.participant.joining`
 - `gaga:voice.participant.connected`
@@ -38,8 +38,12 @@ For Live Voice 1.4, GAGA also acts as the intelligence boundary for browser capa
 - `gaga:session.memory.created`
 - `gaga:session.timeline.updated`
 - `gaga:session.completed`
+- `gaga:community.memory.updated`
+- `gaga:room.lifecycle.changed`
+- `gaga:room.personality.detected`
+- `gaga:intelligence.adapter.ready`
 
-The voice-domain package owns reusable participant presence, room mode, conversation pulse, quality-score, session role, activity state, facilitation, social event, session memory, timeline, summary, and continuity semantics. The WebRTC package only transports media and applies browser sender parameters.
+The voice-domain package owns reusable participant presence, room mode, conversation pulse, quality-score, session role, activity state, facilitation, social event, session memory, participant memory, lifecycle, room personality, timeline, summary, and continuity semantics. The WebRTC package only transports media and applies browser sender parameters. `@live-voice/intelligence-adapter` is an interface-only boundary; the default adapter is a null implementation.
 
 
 ## Release artifact pin

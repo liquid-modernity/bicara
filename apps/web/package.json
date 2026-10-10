@@ -1,6 +1,6 @@
 {
   "name": "@live-voice/web",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@live-voice/gaga-bridge": "workspace:*",
+    "@live-voice/intelligence-adapter": "workspace:*",
     "@live-voice/rtc-core": "workspace:*",
     "@live-voice/shared-types": "workspace:*",
     "@live-voice/signaling-client": "workspace:*",

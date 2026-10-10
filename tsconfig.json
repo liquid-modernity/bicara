@@ -13,6 +13,7 @@
     "paths": {
       "@live-voice/shared-types": ["packages/shared-types/src/index.ts"],
       "@live-voice/voice-domain": ["packages/voice-domain/src/index.ts"],
+      "@live-voice/intelligence-adapter": ["packages/intelligence-adapter/src/index.ts"],
       "@live-voice/signaling-client": ["packages/signaling-client/src/index.ts"],
       "@live-voice/rtc-core": ["packages/rtc-core/src/index.ts"],
       "@live-voice/gaga-bridge": ["packages/gaga-bridge/src/index.ts"]

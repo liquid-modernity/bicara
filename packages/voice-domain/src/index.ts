@@ -2,12 +2,16 @@ import type { ConnectionState, Participant, VoiceMode } from '@live-voice/shared
 export * from './activity-state';
 export * from './continuity';
 export * from './conversation-state';
+export * from './community-moments';
 export * from './facilitation';
 export * from './memory';
+export * from './participant-memory';
 export * from './presence';
 export * from './quality-state';
+export * from './room-lifecycle';
 export * from './room-identity';
 export * from './room-mode';
+export * from './room-personality';
 export * from './roles';
 export * from './session-summary';
 export * from './social-events';

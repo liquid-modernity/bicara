@@ -1,3 +1,4 @@
+import { NullIntelligenceAdapter, type IntelligenceContext } from '@live-voice/intelligence-adapter';
 import { initializeGagaRuntime } from '@live-voice/gaga-bridge';
 import { MeshPeerManager, VoiceEngine } from '@live-voice/rtc-core';
 import type { PeerQualityMetrics } from '@live-voice/rtc-core';
@@ -15,8 +16,12 @@ import {
   canFacilitate,
   addMemoryMoment,
   addMemoryParticipant,
+  communityMomentsFromTimeline,
   completeSessionMemory,
+  completeParticipantPresence,
   createFacilitationState,
+  createParticipantMemory,
+  createRoomLifecycle,
   createSessionMemory,
   createSessionSummary,
   createSocialRoomEvent,
@@ -32,6 +37,9 @@ import {
   qualityFromScore,
   recentSessionFromSummary,
   rememberRecentSession,
+  roomPersonality,
+  updateParticipantMemory,
+  updateRoomLifecycle,
   roomActivityState,
   roomModeProfile,
   roomPulse,
@@ -40,10 +48,14 @@ import {
   type AdaptivePresence,
   type FacilitationAction,
   type FacilitationState,
+  type CommunityMoment,
+  type ParticipantMemory,
   type RecentSession,
   type RoomActivityState,
   type RoomIdentity,
+  type RoomLifecycle,
   type RoomMode,
+  type RoomPersonality,
   type RoomRole,
   type SessionMemory,
   type SocialRoomEvent,
@@ -98,6 +110,10 @@ const quietRoomButton = $('#quiet-room-button') as HTMLButtonElement;
 const endSessionButton = $('#end-session-button') as HTMLButtonElement;
 const socialEventsList = $('#social-events');
 const sessionStoryLabel = $('#session-story');
+const communityPersonalityLabel = $('#community-personality');
+const communityParticipationLabel = $('#community-participation');
+const lastConversationLabel = $('#last-conversation');
+const communityMomentsList = $('#community-moments');
 const diagnosticsPanel = document.querySelector<HTMLPreElement>('#diagnostics-panel');
 
 const DIAGNOSTICS_ENABLED = import.meta.env.DEV;
@@ -106,6 +122,7 @@ const ADAPTIVE_AUDIO_COOLDOWN_MS = 8_000;
 const SESSION_END_DELAY_MS = 3_000;
 const MAX_SOCIAL_EVENTS = 4;
 const RECENT_SESSIONS_KEY = 'live-voice-recent-sessions';
+const PARTICIPANT_MEMORY_KEY = 'live-voice-participant-memory';
 const SIGNALING_URL = resolveSignalingUrl();
 const DEFAULT_ROOM = normalizeRoomId(import.meta.env.PUBLIC_DEFAULT_ROOM || 'general') || 'general';
 const configuredMaxParticipants = Number(import.meta.env.PUBLIC_MAX_PARTICIPANTS || '10');
@@ -128,6 +145,9 @@ let roomIdentity: RoomIdentity = createRoomIdentity(DEFAULT_ROOM, roomMode, Date
 let facilitationState: FacilitationState = createFacilitationState('host');
 let currentActivityState: RoomActivityState = 'preparing';
 let sessionMemory: SessionMemory = createSessionMemory(DEFAULT_ROOM);
+let roomLifecycle: RoomLifecycle = createRoomLifecycle(DEFAULT_ROOM);
+let communityMoments: CommunityMoment[] = [];
+let participantMemories = new Map<string, ParticipantMemory>();
 let recentSessions: RecentSession[] = [];
 let participants = new Map<string, Participant>();
 let participantRoles = new Map<string, RoomRole>();
@@ -151,6 +171,9 @@ let overlapCount = 0;
 let wasOverlapping = false;
 let activeAudioBitrate = roomModeProfile(roomMode).maxAudioBitrate;
 let lastAudioProfileAt = 0;
+let participantJoinedAt = 0;
+let hasPreviousRoomMemory = false;
+let currentPersonality: RoomPersonality | undefined;
 let beforeInstallPrompt: BeforeInstallPromptEvent | undefined;
 let locale = detectLocale();
 let t = createTranslator(locale);
@@ -187,11 +210,13 @@ const gaga = initializeGagaRuntime({
     supportedRoomModes: ['open', 'workshop', 'learning', 'gaming']
   }
 });
+const intelligenceAdapter = new NullIntelligenceAdapter();
 setupInitialState();
 setupEvents();
 registerServiceWorker();
 renderStaticText();
 render();
+gaga.emit('gaga:intelligence.adapter.ready', { adapter: 'null', capabilities: 'none' });
 
 function setupInitialState(): void {
   const url = new URL(window.location.href);
@@ -335,7 +360,14 @@ async function joinRoom(): Promise<void> {
   displayName = normalizeDisplayName(nameInput.value);
   roomId = normalizeRoomId(roomInput.value);
   roomIdentity = createRoomIdentity(roomId || DEFAULT_ROOM, roomMode, Date.now());
-  sessionMemory = createSessionMemory(roomId || DEFAULT_ROOM);
+  participantJoinedAt = Date.now();
+  participantMemories = loadParticipantMemories(roomId || DEFAULT_ROOM);
+  const previousMemory = participantMemories.get(participantId);
+  hasPreviousRoomMemory = Boolean(previousMemory);
+  participantMemories.set(participantId, updateParticipantMemory(previousMemory, participantId, displayName, participantJoinedAt));
+  roomLifecycle = createRoomLifecycle(roomId || DEFAULT_ROOM, participantJoinedAt);
+  sessionMemory = createSessionMemory(roomId || DEFAULT_ROOM, participantJoinedAt);
+  communityMoments = [];
 
   if (!displayName) {
     recordJoinFailure('display-name');
@@ -390,6 +422,7 @@ async function joinRoom(): Promise<void> {
     currentActivityState = 'preparing';
     facilitationState = createFacilitationState('host');
     sessionMemory = addMemoryParticipant(sessionMemory, displayName);
+    saveParticipantMemories(roomId, participantMemories);
     peerMetrics.clear();
     peerQualityState.clear();
     remoteVolumes.clear();
@@ -483,8 +516,8 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
         conversationGroupId: conversationGroup.id,
         conversationParticipants: conversationGroup.participants.length
       });
-      if (message.participants.length > 0) {
-        showSoftStatus(message.participants.some((participant) => participant.speaking) ? t('conversationAlreadyActive') : t('welcomeBack'));
+      if (message.participants.length > 0 || hasPreviousRoomMemory) {
+        showSoftStatus(message.participants.some((participant) => participant.speaking) ? t('conversationAlreadyActive') : `${t('welcomeBack')}, ${displayName}`);
       }
       logRoomMetrics('room.joined');
       render();
@@ -553,11 +586,15 @@ function leaveRoom(updateUi = true): void {
   audioBin.replaceChildren();
   participants.clear();
   participantRoles.clear();
+  participantMemories.clear();
   socialEvents = [];
   lastSocialEvent = undefined;
   currentActivityState = 'preparing';
   facilitationState = createFacilitationState('host');
   sessionMemory = createSessionMemory(DEFAULT_ROOM);
+  roomLifecycle = createRoomLifecycle(DEFAULT_ROOM);
+  communityMoments = [];
+  currentPersonality = undefined;
   peerMetrics.clear();
   peerQualityState.clear();
   remoteVolumes.clear();
@@ -628,6 +665,8 @@ function upsertRemoteParticipant(remote: SignalingParticipant): void {
     gaga.emit('gaga:participant.role.changed', { roomId, participantId: remote.id, role });
   }
   sessionMemory = addMemoryParticipant(sessionMemory, remote.displayName);
+  participantMemories.set(remote.id, participantMemories.get(remote.id) ?? createParticipantMemory(remote.id, remote.displayName));
+  saveParticipantMemories(roomId, participantMemories);
   peerQualityState.delete(remote.id);
   if (wasRecovering) {
     markParticipantReturning(remote.id);
@@ -1227,6 +1266,7 @@ function render(): void {
   renderRoomPulse();
   renderSocialEvents();
   renderSessionStory();
+  renderCommunityStory();
 }
 
 function renderRoomIdentity(): void {
@@ -1368,6 +1408,11 @@ function renderRoomPulse(): void {
     currentActivityState = activity;
     gaga.emit('gaga:room.activity.changed', { roomId, participantId, activity, previousActivity });
   }
+  const previousLifecycle = roomLifecycle.state;
+  roomLifecycle = updateRoomLifecycle(roomLifecycle, activity);
+  if (roomLifecycle.state !== previousLifecycle) {
+    gaga.emit('gaga:room.lifecycle.changed', { roomId, participantId, lifecycle: roomLifecycle.state, previousLifecycle });
+  }
 }
 
 function presenceText(presence: AdaptivePresence): string {
@@ -1428,6 +1473,30 @@ function renderSessionStory(): void {
   sessionStoryLabel.textContent = `${duration} · ${summary.participationMoments} ${t('storyMoments')}`;
 }
 
+function renderCommunityStory(): void {
+  communityMoments = communityMomentsFromTimeline(sessionMemory.activityTimeline, participantMemories.size || participants.size);
+  const personality = roomPersonality(roomMode, activeParticipantCount(), facilitationState.sessionState);
+  if (personality.personality !== currentPersonality) {
+    currentPersonality = personality.personality;
+    gaga.emit('gaga:room.personality.detected', { roomId, participantId, personality: personality.personality });
+  }
+  communityPersonalityLabel.textContent = personality.label;
+  communityParticipationLabel.textContent = `${personality.description} · ${participantMemories.size || participants.size} ${t('membersParticipated')}`;
+  lastConversationLabel.textContent = `${t('lastConversation')}: ${roomLifecycle.lastConversationAt ? relativeSessionDay(roomLifecycle.lastConversationAt) : t('today')}`;
+  communityMomentsList.replaceChildren();
+  if (communityMoments.length === 0) {
+    const item = document.createElement('li');
+    item.textContent = t('noMomentsYet');
+    communityMomentsList.append(item);
+    return;
+  }
+  for (const moment of communityMoments) {
+    const item = document.createElement('li');
+    item.textContent = moment.label;
+    communityMomentsList.append(item);
+  }
+}
+
 function completeCurrentSession(): void {
   if (sessionMemory.endedAt) return;
   const endedMemory = completeSessionMemory(
@@ -1435,6 +1504,15 @@ function completeCurrentSession(): void {
     Date.now()
   );
   sessionMemory = endedMemory;
+  const localMemory = participantMemories.get(participantId);
+  if (localMemory) {
+    participantMemories.set(
+      participantId,
+      completeParticipantPresence(localMemory, participantJoinedAt || endedMemory.startedAt, endedMemory.endedAt ?? Date.now(), endedMemory.activityTimeline.length)
+    );
+    saveParticipantMemories(roomId, participantMemories);
+    gaga.emit('gaga:community.memory.updated', { roomId, participantId, participantCount: participantMemories.size });
+  }
   const summary = createSessionSummary(endedMemory);
   const recent = recentSessionFromSummary(summary, {
     roomName: roomIdentity.name,
@@ -1451,7 +1529,17 @@ function completeCurrentSession(): void {
     participantCount: summary.participantCount,
     participationMoments: summary.participationMoments
   });
+  void intelligenceAdapter.analyze(intelligenceContext());
   renderRecentSessions();
+}
+
+function intelligenceContext(): IntelligenceContext {
+  return {
+    room: roomIdentity,
+    participants: [...participantMemories.values()],
+    activityTimeline: sessionMemory.activityTimeline,
+    communityMoments
+  };
 }
 
 function renderRecentSessions(): void {
@@ -1481,6 +1569,24 @@ function saveRecentSessions(sessions: RecentSession[]): void {
   localStorage.setItem(RECENT_SESSIONS_KEY, JSON.stringify(sessions.slice(0, 5)));
 }
 
+function loadParticipantMemories(currentRoomId: string): Map<string, ParticipantMemory> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(participantMemoryKey(currentRoomId)) || '[]') as ParticipantMemory[];
+    const memories = Array.isArray(parsed) ? parsed.filter(isParticipantMemory) : [];
+    return new Map(memories.map((memory) => [memory.participantId, memory]));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveParticipantMemories(currentRoomId: string, memories: Map<string, ParticipantMemory>): void {
+  localStorage.setItem(participantMemoryKey(currentRoomId), JSON.stringify([...memories.values()].slice(-25)));
+}
+
+function participantMemoryKey(currentRoomId: string): string {
+  return `${PARTICIPANT_MEMORY_KEY}:${currentRoomId || DEFAULT_ROOM}`;
+}
+
 function isRecentSession(value: unknown): value is RecentSession {
   if (!value || typeof value !== 'object') return false;
   const session = value as Partial<RecentSession>;
@@ -1489,6 +1595,16 @@ function isRecentSession(value: unknown): value is RecentSession {
     && typeof session.roomName === 'string'
     && typeof session.durationMs === 'number'
     && typeof session.participantCount === 'number';
+}
+
+function isParticipantMemory(value: unknown): value is ParticipantMemory {
+  if (!value || typeof value !== 'object') return false;
+  const memory = value as Partial<ParticipantMemory>;
+  return typeof memory.participantId === 'string'
+    && typeof memory.displayName === 'string'
+    && typeof memory.firstJoined === 'number'
+    && typeof memory.lastJoined === 'number'
+    && typeof memory.sessionsJoined === 'number';
 }
 
 function relativeSessionDay(endedAt: number): string {

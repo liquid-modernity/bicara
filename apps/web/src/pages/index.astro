@@ -40,7 +40,7 @@ const description = 'Browser-native real-time voice rooms.';
 
     <main id="main" class="gaga-app-shell">
       <section id="join-view" class="gaga-panel gaga-join-panel" aria-labelledby="join-title">
-        <div class="gaga-eyebrow">LIVE VOICE 1.4</div>
+        <div class="gaga-eyebrow">LIVE VOICE 1.5</div>
         <h1 id="join-title" data-i18n="landingTitle">Masuk ke ruang suara</h1>
         <p class="gaga-lead" data-i18n="landingText">Masukkan nama dan ruang. Mikrofon hanya aktif setelah Anda memberikan izin.</p>
 
@@ -153,6 +153,14 @@ const description = 'Browser-native real-time voice rooms.';
             <span>Story</span>
             <strong id="session-story">Just started</strong>
           </div>
+          <div class="gaga-side-divider"></div>
+          <section class="gaga-community-story" aria-labelledby="community-story-title">
+            <h2 id="community-story-title" data-i18n="roomStory">Room story</h2>
+            <strong id="community-personality">Community lounge</strong>
+            <p id="community-participation">A place to talk freely</p>
+            <p id="last-conversation">Last conversation: Today</p>
+            <ul id="community-moments"></ul>
+          </section>
           <div class="gaga-side-divider"></div>
           <pre id="diagnostics-panel" class="gaga-diagnostics" hidden aria-label="Diagnostics"></pre>
           <div id="audio-output-wrap" class="gaga-output-select" hidden>

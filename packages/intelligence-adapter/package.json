@@ -1,5 +1,5 @@
 {
-  "name": "@live-voice/shared-types",
+  "name": "@live-voice/intelligence-adapter",
   "version": "1.5.0",
   "private": true,
   "type": "module",
@@ -8,6 +8,9 @@
     "build": "tsc --noEmit -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@live-voice/voice-domain": "workspace:*"
   },
   "devDependencies": {
     "typescript": "5.9.3"
