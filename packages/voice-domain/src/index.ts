@@ -2,6 +2,7 @@ import type { ConnectionState, Participant, VoiceMode } from '@live-voice/shared
 export * from './conversation-state';
 export * from './presence';
 export * from './quality-state';
+export * from './room-identity';
 export * from './room-mode';
 
 export interface VoiceRoomState {

@@ -153,6 +153,7 @@ h1 { margin: .55rem 0 .7rem; font-size: clamp(2rem, 5vw, 3.25rem); line-height: 
 .gaga-room-side p { color: var(--gaga-text-muted); font-size: .78rem; line-height: 1.55; }
 .gaga-room-heading, .gaga-section-title { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .gaga-room-heading h1 { margin: .35rem 0 0; font-size: clamp(1.8rem, 4vw, 2.5rem); }
+.gaga-room-purpose { margin: .25rem 0 0; color: var(--gaga-text-muted); font-size: .84rem; }
 .gaga-status-strip { margin-top: 1.25rem; min-height: 44px; display: flex; align-items: center; flex-wrap: wrap; gap: .55rem .8rem; border: 1px solid var(--gaga-border); border-radius: 12px; padding: .65rem .9rem; color: var(--gaga-text-muted); font-size: .8rem; background: rgba(3, 13, 24, .35); }
 .gaga-status-item { display: inline-flex; align-items: center; gap: .35rem; }
 .gaga-status-item strong { color: var(--gaga-text); }

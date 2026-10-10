@@ -12,6 +12,7 @@ import type {
 import { SignalingClient } from '@live-voice/signaling-client';
 import {
   defaultConversationGroup,
+  createRoomIdentity,
   normalizeDisplayName,
   normalizeRoomId,
   normalizeRoomMode,
@@ -22,6 +23,7 @@ import {
   roomPulse,
   scoreConnectionQuality,
   type AdaptivePresence,
+  type RoomIdentity,
   type RoomMode
 } from '@live-voice/voice-domain';
 import { createTranslator, detectLocale, type Locale, type TranslationKey } from '../lib/i18n';
@@ -46,6 +48,7 @@ const participantList = $('#participant-list');
 const statusLabel = $('#connection-status');
 const qualityLabel = $('#quality-status');
 const roomTitle = $('#room-title');
+const roomPurpose = $('#room-purpose');
 const errorBox = $('#error-box');
 const audioBin = $('#remote-audio-bin');
 const modeSelect = $('#voice-mode') as HTMLSelectElement;
@@ -83,6 +86,7 @@ let speaking = false;
 const storedMode = localStorage.getItem('live-voice-mode');
 let mode: VoiceMode = storedMode === 'push-to-talk' ? 'push-to-talk' : 'open-mic';
 let roomMode: RoomMode = normalizeRoomMode(localStorage.getItem('live-voice-room-mode'));
+let roomIdentity: RoomIdentity = createRoomIdentity(DEFAULT_ROOM, roomMode, Date.now());
 let participants = new Map<string, Participant>();
 let stopSpeakingMonitor: (() => void) | undefined;
 let qualityTimer: number | undefined;
@@ -182,6 +186,7 @@ function setupEvents(): void {
   roomModeSelect.addEventListener('change', () => {
     roomMode = normalizeRoomMode(roomModeSelect.value);
     localStorage.setItem('live-voice-room-mode', roomMode);
+    roomIdentity = createRoomIdentity(roomId || roomInput.value || DEFAULT_ROOM, roomMode, roomIdentity.createdAt);
     gaga.emit('gaga:room.mode', { mode: roomMode });
     void applyAdaptiveAudio();
     render();
@@ -276,6 +281,7 @@ async function joinRoom(): Promise<void> {
   roomMetrics.lastJoinRequestedAt = Date.now();
   displayName = normalizeDisplayName(nameInput.value);
   roomId = normalizeRoomId(roomInput.value);
+  roomIdentity = createRoomIdentity(roomId || DEFAULT_ROOM, roomMode, Date.now());
 
   if (!displayName) {
     recordJoinFailure('display-name');
@@ -358,7 +364,7 @@ async function joinRoom(): Promise<void> {
 
     joinView.hidden = true;
     roomView.hidden = false;
-    roomTitle.textContent = roomId;
+    renderRoomIdentity();
     updateUrlRoom(roomId);
     startQualityMonitor();
     gaga.emit('gaga:room-join-requested', { roomId, participantId, roomMode });
@@ -381,6 +387,7 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
     case 'room.welcome': {
       roomMetrics.joinSuccesses += 1;
       roomMetrics.roomStartedAt = Date.now();
+      roomIdentity = createRoomIdentity(roomId, roomMode, roomMetrics.roomStartedAt);
       participants = new Map([[participantId, localParticipant()]]);
       for (const participant of message.participants) upsertRemoteParticipant(participant);
       setConnectionStatus('connected');
@@ -394,12 +401,14 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
         const offer = await mesh?.createOffer(participant.id, true);
         if (offer) signaling.send({ type: 'signal.offer', targetId: participant.id, payload: offer });
       }
-      const conversationGroup = defaultConversationGroup(roomId, [...participants.keys()], roomMode);
+      const conversationGroup = defaultConversationGroup(roomIdentity.id, [...participants.keys()], roomMode);
       gaga.emit('gaga:room-joined', { roomId, participantId, participantCount: participants.size });
       gaga.emit('gaga:voice.joined', {
         roomId,
         participantId,
         roomMode,
+        roomName: roomIdentity.name,
+        roomPurpose: roomIdentity.purpose,
         participantCount: participants.size,
         conversationGroupId: conversationGroup.id,
         conversationParticipants: conversationGroup.participants.length
@@ -594,6 +603,7 @@ function markParticipantReconnecting(peerId: string): void {
   peerQualityState.set(peerId, 'reconnecting');
   participants.set(peerId, participant);
   gaga.emit('gaga:voice.participant.reconnecting', { roomId, participantId: peerId });
+  showSoftStatus(`${participant.displayName} ${t('isReconnecting')}`);
 }
 
 function scheduleParticipantRemoval(peerId: string): void {
@@ -653,7 +663,7 @@ function markParticipantReturning(peerId: string): void {
   applyPresenceToParticipant(participant, 'returning');
   participants.set(peerId, participant);
   gaga.emit('gaga:voice.recovered', { roomId, participantId: peerId });
-  showSoftStatus(t('voiceRestored'));
+  showSoftStatus(`${participant.displayName} ${t('isBack')}`);
   const timer = window.setTimeout(() => {
     participantReturningTimers.delete(peerId);
     const current = participants.get(peerId);
@@ -737,6 +747,7 @@ function schedulePeerRecovery(peerId: string, delayMs: number, reason: 'disconne
     void recoverPeer(peerId, reason, metrics.reconnectAttempts);
   }, delayMs);
   peerRecoveryTimers.set(peerId, timer);
+  showSoftStatus(t('improvingConnection'));
 }
 
 async function recoverPeer(peerId: string, reason: string, reconnectAttempts: number): Promise<void> {
@@ -1048,7 +1059,7 @@ function setConnectionStatus(state: string): void {
 }
 
 function updateOptimizingStatus(active: boolean): void {
-  optimizingLabel.textContent = t('optimizingVoice');
+  optimizingLabel.textContent = t('keepingVoicesClear');
   optimizingLabel.hidden = !active;
 }
 
@@ -1061,9 +1072,18 @@ function showSoftStatus(message: string): void {
 }
 
 function render(): void {
+  renderRoomIdentity();
   renderControls();
   renderParticipants();
   renderRoomPulse();
+}
+
+function renderRoomIdentity(): void {
+  const identity = roomIdentity.id === (roomId || DEFAULT_ROOM)
+    ? roomIdentity
+    : createRoomIdentity(roomId || DEFAULT_ROOM, roomMode, roomIdentity.createdAt);
+  roomTitle.textContent = identity.name;
+  roomPurpose.textContent = modePurposeText(identity.mode);
 }
 
 function renderControls(): void {
@@ -1165,11 +1185,13 @@ function renderRoomPulse(): void {
     ? t('pulseQuietRoom')
     : snapshot.pulse === 'people-returning'
       ? t('pulsePeopleReturning')
-      : snapshot.speakingCount > 1
-        ? `${snapshot.speakingCount} ${t('peopleSpeaking')}`
-        : snapshot.speakingCount === 1
-          ? t('pulseOneSpeaking')
-          : t('pulseConversationActive');
+      : snapshot.pulse === 'everyone-listening'
+        ? t('pulseEveryoneListening')
+        : snapshot.speakingCount > 1
+          ? `${snapshot.speakingCount} ${t('peopleSpeaking')}`
+          : snapshot.speakingCount === 1
+            ? t('pulseOneSpeaking')
+            : t('pulseConversationActive');
 }
 
 function presenceText(presence: AdaptivePresence): string {
@@ -1178,10 +1200,17 @@ function presenceText(presence: AdaptivePresence): string {
   if (presence === 'present') return t('present');
   if (presence === 'joining') return t('joiningState');
   if (presence === 'reconnecting') return t('reconnecting');
-  if (presence === 'returning') return t('returning');
+  if (presence === 'returning') return `${t('returning')}...`;
   if (presence === 'unstable') return t('unstable');
   if (presence === 'left') return t('left');
   return t('listening');
+}
+
+function modePurposeText(mode: RoomMode): string {
+  if (mode === 'workshop') return t('purposeWorkshop');
+  if (mode === 'learning') return t('purposeLearning');
+  if (mode === 'gaming') return t('purposeGaming');
+  return t('purposeOpen');
 }
 
 function presenceGlyph(presence: AdaptivePresence): string {
