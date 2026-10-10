@@ -10,7 +10,20 @@ import type {
   VoiceMode
 } from '@live-voice/shared-types';
 import { SignalingClient } from '@live-voice/signaling-client';
-import { normalizeDisplayName, normalizeRoomId } from '@live-voice/voice-domain';
+import {
+  defaultConversationGroup,
+  normalizeDisplayName,
+  normalizeRoomId,
+  normalizeRoomMode,
+  participantPresence,
+  qualityPolicy,
+  qualityFromScore,
+  roomModeProfile,
+  roomPulse,
+  scoreConnectionQuality,
+  type AdaptivePresence,
+  type RoomMode
+} from '@live-voice/voice-domain';
 import { createTranslator, detectLocale, type Locale, type TranslationKey } from '../lib/i18n';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
@@ -36,6 +49,7 @@ const roomTitle = $('#room-title');
 const errorBox = $('#error-box');
 const audioBin = $('#remote-audio-bin');
 const modeSelect = $('#voice-mode') as HTMLSelectElement;
+const roomModeSelect = $('#room-mode') as HTMLSelectElement;
 const localeSelect = $('#locale-select') as HTMLSelectElement;
 const installButton = $('#install-button') as HTMLButtonElement;
 const audioEnableButton = $('#enable-audio-button') as HTMLButtonElement;
@@ -44,9 +58,13 @@ const audioOutputSelect = $('#audio-output') as HTMLSelectElement;
 const capacityLabel = $('#capacity-label');
 const offlineBanner = $('#offline-banner');
 const pttHint = $('#ptt-hint');
+const pulseLabel = $('#room-pulse');
+const optimizingLabel = $('#optimizing-label');
 const diagnosticsPanel = document.querySelector<HTMLPreElement>('#diagnostics-panel');
 
 const DIAGNOSTICS_ENABLED = import.meta.env.DEV;
+const PARTICIPANT_RECONNECT_GRACE_MS = 15_000;
+const ADAPTIVE_AUDIO_COOLDOWN_MS = 8_000;
 const SIGNALING_URL = resolveSignalingUrl();
 const DEFAULT_ROOM = normalizeRoomId(import.meta.env.PUBLIC_DEFAULT_ROOM || 'general') || 'general';
 const configuredMaxParticipants = Number(import.meta.env.PUBLIC_MAX_PARTICIPANTS || '10');
@@ -64,13 +82,24 @@ let muted = true;
 let speaking = false;
 const storedMode = localStorage.getItem('live-voice-mode');
 let mode: VoiceMode = storedMode === 'push-to-talk' ? 'push-to-talk' : 'open-mic';
+let roomMode: RoomMode = normalizeRoomMode(localStorage.getItem('live-voice-room-mode'));
 let participants = new Map<string, Participant>();
 let stopSpeakingMonitor: (() => void) | undefined;
 let qualityTimer: number | undefined;
 const peerRecoveryTimers = new Map<string, number>();
+const participantRemovalTimers = new Map<string, number>();
 const peerMetrics = new Map<string, PeerMetrics>();
+const peerQualityState = new Map<string, ConnectionQuality | 'reconnecting'>();
+const remoteVolumes = new Map<string, number>();
+const localMutedPeers = new Set<string>();
 let roomMetrics = createRoomMetrics();
 let lastSignalingState: 'connecting' | 'open' | 'closed' | 'reconnecting' | 'failed' | undefined;
+let focusedPeerId: string | undefined;
+let lastSpeakingAt = 0;
+let overlapCount = 0;
+let wasOverlapping = false;
+let activeAudioBitrate = roomModeProfile(roomMode).maxAudioBitrate;
+let lastAudioProfileAt = 0;
 let beforeInstallPrompt: BeforeInstallPromptEvent | undefined;
 let locale = detectLocale();
 let t = createTranslator(locale);
@@ -103,7 +132,8 @@ const gaga = initializeGagaRuntime({
   config: {
     defaultRoom: DEFAULT_ROOM,
     maxParticipants: MAX_PARTICIPANTS,
-    supportedModes: ['open-mic', 'push-to-talk']
+    supportedModes: ['open-mic', 'push-to-talk'],
+    supportedRoomModes: ['open', 'workshop', 'learning', 'gaming']
   }
 });
 setupInitialState();
@@ -118,6 +148,7 @@ function setupInitialState(): void {
   roomInput.value = roomFromUrl || DEFAULT_ROOM;
   nameInput.value = localStorage.getItem('live-voice-display-name') ?? '';
   modeSelect.value = mode;
+  roomModeSelect.value = roomMode;
   localeSelect.value = locale;
   updateOnlineState();
 }
@@ -145,6 +176,14 @@ function setupEvents(): void {
     if (mode === 'push-to-talk') setMuted(true);
     renderControls();
     gaga.emit('gaga:voice-mode-changed', { mode });
+  });
+
+  roomModeSelect.addEventListener('change', () => {
+    roomMode = normalizeRoomMode(roomModeSelect.value);
+    localStorage.setItem('live-voice-room-mode', roomMode);
+    gaga.emit('gaga:room.mode', { mode: roomMode });
+    void applyAdaptiveAudio();
+    render();
   });
 
   localeSelect.addEventListener('change', () => {
@@ -192,12 +231,15 @@ function setupEvents(): void {
     if (state === 'reconnecting') {
       if (lastSignalingState !== 'reconnecting') {
         roomMetrics.reconnectCount += 1;
+        markAllRemoteParticipants('reconnecting');
+        gaga.emit('gaga:voice.reconnecting', { roomId, participantId });
         logRoomMetrics('room.reconnect');
       }
       setConnectionStatus('reconnecting');
     }
     if (state === 'failed') {
       setConnectionStatus('failed');
+      markAllRemoteParticipants('offline');
       showError(t('genericError'));
     }
     lastSignalingState = state;
@@ -282,11 +324,24 @@ async function joinRoom(): Promise<void> {
 
     participants.clear();
     peerMetrics.clear();
+    peerQualityState.clear();
+    remoteVolumes.clear();
+    localMutedPeers.clear();
+    focusedPeerId = undefined;
+    lastSpeakingAt = 0;
+    overlapCount = 0;
+    wasOverlapping = false;
+    activeAudioBitrate = roomModeProfile(roomMode).maxAudioBitrate;
+    lastAudioProfileAt = 0;
+    participantRemovalTimers.forEach((timer) => window.clearTimeout(timer));
+    participantRemovalTimers.clear();
     participants.set(participantId, localParticipant());
+    gaga.emit('gaga:voice.participant.joining', { roomId, participantId });
 
     stopSpeakingMonitor?.();
     stopSpeakingMonitor = voice.monitorLocalSpeaking((active) => {
       speaking = active;
+      if (active) lastSpeakingAt = Date.now();
       updateLocalParticipant();
       signaling.send({ type: 'participant.update', payload: { speaking: active } });
     });
@@ -303,7 +358,7 @@ async function joinRoom(): Promise<void> {
     roomTitle.textContent = roomId;
     updateUrlRoom(roomId);
     startQualityMonitor();
-    gaga.emit('gaga:room-join-requested', { roomId, participantId });
+    gaga.emit('gaga:room-join-requested', { roomId, participantId, roomMode });
     logRoomMetrics('room.join_requested');
     render();
   } catch (error) {
@@ -326,6 +381,7 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
       participants = new Map([[participantId, localParticipant()]]);
       for (const participant of message.participants) upsertRemoteParticipant(participant);
       setConnectionStatus('connected');
+      gaga.emit('gaga:voice.participant.connected', { roomId, participantId });
       joinButton.disabled = false;
       joinButton.textContent = t('join');
       signaling.send({ type: 'participant.update', payload: { muted, speaking } });
@@ -335,25 +391,35 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
         const offer = await mesh?.createOffer(participant.id, true);
         if (offer) signaling.send({ type: 'signal.offer', targetId: participant.id, payload: offer });
       }
+      const conversationGroup = defaultConversationGroup(roomId, [...participants.keys()], roomMode);
       gaga.emit('gaga:room-joined', { roomId, participantId, participantCount: participants.size });
+      gaga.emit('gaga:voice.joined', {
+        roomId,
+        participantId,
+        roomMode,
+        participantCount: participants.size,
+        conversationGroupId: conversationGroup.id,
+        conversationParticipants: conversationGroup.participants.length
+      });
       logRoomMetrics('room.joined');
       render();
       break;
     }
     case 'participant.joined':
+      cancelParticipantRemoval(message.participant.id);
       upsertRemoteParticipant(message.participant);
       logRoomMetrics('room.participant_joined');
       render();
       break;
     case 'participant.updated':
       upsertRemoteParticipant(message.participant);
+      if (message.participant.speaking) lastSpeakingAt = Date.now();
       render();
       break;
     case 'participant.left':
-      participants.delete(message.participantId);
+      markParticipantReconnecting(message.participantId);
       mesh?.remove(message.participantId);
-      peerMetrics.delete(message.participantId);
-      removeRemoteAudio(message.participantId);
+      scheduleParticipantRemoval(message.participantId);
       logRoomMetrics('room.participant_left');
       render();
       break;
@@ -370,6 +436,7 @@ async function handleSignal(message: ServerSignalMessage): Promise<void> {
       break;
     case 'error':
       showError(message.code === 'ROOM_FULL' ? t('roomFull') : message.message || t('genericError'));
+      recordJoinFailure(message.code);
       if (!message.recoverable) leaveRoom();
       break;
     case 'pong':
@@ -385,6 +452,8 @@ function leaveRoom(updateUi = true): void {
   mesh = undefined;
   peerRecoveryTimers.forEach((timer) => window.clearTimeout(timer));
   peerRecoveryTimers.clear();
+  participantRemovalTimers.forEach((timer) => window.clearTimeout(timer));
+  participantRemovalTimers.clear();
   voice.stop();
   stopSpeakingMonitor?.();
   stopSpeakingMonitor = undefined;
@@ -393,8 +462,15 @@ function leaveRoom(updateUi = true): void {
   audioBin.replaceChildren();
   participants.clear();
   peerMetrics.clear();
+  peerQualityState.clear();
+  remoteVolumes.clear();
+  localMutedPeers.clear();
   roomMetrics = createRoomMetrics();
   lastSignalingState = undefined;
+  focusedPeerId = undefined;
+  lastSpeakingAt = 0;
+  overlapCount = 0;
+  wasOverlapping = false;
   speaking = false;
   muted = true;
 
@@ -439,13 +515,22 @@ function localParticipant(): Participant {
 
 function upsertRemoteParticipant(remote: SignalingParticipant): void {
   if (remote.id === participantId) return;
+  const previous = participants.get(remote.id);
+  const wasRecovering = previous?.connectionState === 'reconnecting' || previous?.connectionState === 'failed';
+  const previousQuality = previous?.connectionQuality ?? peerQualityState.get(remote.id) ?? 'unknown';
   participants.set(remote.id, {
     id: remote.id,
     displayName: remote.displayName,
     audioState: remote.muted ? 'muted' : remote.speaking ? 'speaking' : 'listening',
     connectionState: 'connected',
-    connectionQuality: 'unknown'
+    connectionQuality: previousQuality === 'reconnecting' ? 'unknown' : previousQuality
   });
+  peerQualityState.delete(remote.id);
+  if (wasRecovering) {
+    gaga.emit('gaga:voice.recovered', { roomId, participantId: remote.id });
+    showSoftStatus(t('reconnected'));
+  }
+  gaga.emit('gaga:voice.participant.connected', { roomId, participantId: remote.id });
 }
 
 function attachRemoteStream(peerId: string, stream: MediaStream): void {
@@ -457,6 +542,7 @@ function attachRemoteStream(peerId: string, stream: MediaStream): void {
     audioBin.append(audio);
   }
   audio.srcObject = stream;
+  applyRemoteAudioPreferences(peerId);
   void applyAudioOutput(audio, audioOutputSelect.value);
   void audio.play().then(() => {
     audioEnableButton.hidden = true;
@@ -469,6 +555,90 @@ function removeRemoteAudio(peerId: string): void {
   document.querySelector<HTMLAudioElement>(`audio[data-peer-id="${CSS.escape(peerId)}"]`)?.remove();
 }
 
+function applyRemoteAudioPreferences(peerId?: string): void {
+  const audioNodes = Array.from(audioBin.querySelectorAll<HTMLAudioElement>('audio'));
+  for (const audio of audioNodes) {
+    const id = audio.dataset.peerId ?? '';
+    if (peerId && id !== peerId) continue;
+    const baseVolume = remoteVolumes.get(id) ?? 1;
+    const focusVolume = focusedPeerId && focusedPeerId !== id ? Math.min(baseVolume, 0.35) : baseVolume;
+    audio.volume = Math.max(0, Math.min(1, focusVolume));
+    audio.muted = localMutedPeers.has(id);
+  }
+}
+
+function cancelParticipantRemoval(peerId: string): void {
+  const timer = participantRemovalTimers.get(peerId);
+  if (!timer) return;
+  window.clearTimeout(timer);
+  participantRemovalTimers.delete(peerId);
+}
+
+function markAllRemoteParticipants(state: AdaptivePresence): void {
+  for (const participant of participants.values()) {
+    if (participant.isLocal || participant.connectionState === 'closed') continue;
+    applyPresenceToParticipant(participant, state);
+    participants.set(participant.id, participant);
+  }
+  render();
+}
+
+function markParticipantReconnecting(peerId: string): void {
+  const participant = participants.get(peerId);
+  if (!participant) return;
+  applyPresenceToParticipant(participant, 'reconnecting');
+  peerQualityState.set(peerId, 'reconnecting');
+  participants.set(peerId, participant);
+  gaga.emit('gaga:voice.participant.reconnecting', { roomId, participantId: peerId });
+}
+
+function scheduleParticipantRemoval(peerId: string): void {
+  cancelParticipantRemoval(peerId);
+  const timer = window.setTimeout(() => {
+    participantRemovalTimers.delete(peerId);
+    const participant = participants.get(peerId);
+    if (!participant) return;
+    applyPresenceToParticipant(participant, 'left');
+    participants.set(peerId, participant);
+    peerMetrics.delete(peerId);
+    peerQualityState.delete(peerId);
+    localMutedPeers.delete(peerId);
+    remoteVolumes.delete(peerId);
+    if (focusedPeerId === peerId) focusedPeerId = undefined;
+    removeRemoteAudio(peerId);
+    gaga.emit('gaga:voice.participant.left', { roomId, participantId: peerId });
+    render();
+  }, PARTICIPANT_RECONNECT_GRACE_MS);
+  participantRemovalTimers.set(peerId, timer);
+}
+
+function applyPresenceToParticipant(participant: Participant, presence: AdaptivePresence): void {
+  if (presence === 'joining') {
+    participant.connectionState = 'connecting';
+    participant.audioState = 'joining';
+    return;
+  }
+  if (presence === 'reconnecting') {
+    participant.connectionState = 'reconnecting';
+    participant.audioState = 'reconnecting';
+    return;
+  }
+  if (presence === 'offline') {
+    participant.connectionState = 'failed';
+    participant.audioState = 'offline';
+    return;
+  }
+  if (presence === 'left') {
+    participant.connectionState = 'closed';
+    participant.audioState = 'left';
+    return;
+  }
+  if (presence === 'poor-connection') {
+    participant.connectionState = 'connected';
+    participant.connectionQuality = 'poor';
+  }
+}
+
 async function resumeRemoteAudio(): Promise<void> {
   const audioNodes = Array.from(audioBin.querySelectorAll<HTMLAudioElement>('audio'));
   const results = await Promise.allSettled(audioNodes.map((audio) => audio.play()));
@@ -479,7 +649,13 @@ function handlePeerConnectionState(peerId: string, state: RTCPeerConnectionState
   const participant = participants.get(peerId);
   if (!participant) return;
   const metrics = recordPeerConnectionState(peerId, state);
+  if (state === 'closed' && participantRemovalTimers.has(peerId)) {
+    logClientEvent('webrtc.connection_state', { peerId, state, reconnectAttempts: metrics.reconnectAttempts });
+    return;
+  }
   participant.connectionState = peerUiState(state);
+  if (participant.connectionState === 'reconnecting') participant.audioState = 'reconnecting';
+  if (participant.connectionState === 'closed') participant.audioState = 'left';
   participants.set(peerId, participant);
   renderParticipants();
 
@@ -495,7 +671,16 @@ function handlePeerConnectionState(peerId: string, state: RTCPeerConnectionState
     const timer = peerRecoveryTimers.get(peerId);
     if (timer) window.clearTimeout(timer);
     peerRecoveryTimers.delete(peerId);
+    if (participant.audioState === 'reconnecting' || participant.connectionQuality === 'poor') {
+      participant.audioState = 'listening';
+      participant.connectionQuality = 'unknown';
+      participants.set(peerId, participant);
+      gaga.emit('gaga:voice.recovered', { roomId, participantId: peerId });
+      showSoftStatus(t('reconnected'));
+      render();
+    }
     gaga.emit('gaga:peer-connected', { peerId });
+    gaga.emit('gaga:voice.participant.connected', { roomId, participantId: peerId });
     return;
   }
 
@@ -506,8 +691,9 @@ function handlePeerConnectionState(peerId: string, state: RTCPeerConnectionState
     return;
   }
 
-  if (state === 'disconnected') schedulePeerRecovery(peerId, 2_500, 'disconnected');
-  if (state === 'failed') schedulePeerRecovery(peerId, 750, 'failed');
+  const profile = roomModeProfile(roomMode);
+  if (state === 'disconnected') schedulePeerRecovery(peerId, profile.recoveryDelayMs.disconnected, 'disconnected');
+  if (state === 'failed') schedulePeerRecovery(peerId, profile.recoveryDelayMs.failed, 'failed');
 }
 
 function peerUiState(state: RTCPeerConnectionState): Participant['connectionState'] {
@@ -517,7 +703,7 @@ function peerUiState(state: RTCPeerConnectionState): Participant['connectionStat
   return 'reconnecting';
 }
 
-function schedulePeerRecovery(peerId: string, delayMs: number, reason: 'disconnected' | 'failed'): void {
+function schedulePeerRecovery(peerId: string, delayMs: number, reason: 'disconnected' | 'failed' | 'poor'): void {
   // Only one deterministic side initiates recovery, preventing offer glare.
   if (participantId.localeCompare(peerId) >= 0 || peerRecoveryTimers.has(peerId)) return;
   const metrics = metricsForPeer(peerId);
@@ -644,19 +830,18 @@ function roomDurationMs(): number {
 
 function qualityFromPeerMetrics(metrics: PeerQualityMetrics[]): ConnectionQuality {
   if (metrics.length === 0) return 'unknown';
-  let worstScore = 0;
-  for (const metric of metrics) {
-    const rttMs = metric.rttMs ?? 0;
-    const loss = metric.packetLossRatio ?? 0;
-    const score = rttMs > 400 || loss > 0.08 ? 2 : rttMs > 200 || loss > 0.03 ? 1 : 0;
-    worstScore = Math.max(worstScore, score);
-  }
-  return worstScore === 2 ? 'poor' : worstScore === 1 ? 'fair' : 'good';
+  return qualityFromScore(worstQualityScore(metrics));
+}
+
+function worstQualityScore(metrics: PeerQualityMetrics[]): number {
+  if (metrics.length === 0) return 100;
+  return Math.min(...metrics.map((metric) => scoreConnectionQuality(metric)));
 }
 
 function aggregatePeerQuality(metrics: PeerQualityMetrics[]): ClientLogDetail {
   return {
     peerCount: metrics.length,
+    qualityScore: metrics.length > 0 ? worstQualityScore(metrics) : null,
     avgRttMs: average(metrics.map((metric) => metric.rttMs)),
     packetLossPct: percentage(average(metrics.map((metric) => metric.packetLossRatio))),
     avgJitterMs: average(metrics.map((metric) => metric.jitterMs)),
@@ -729,14 +914,81 @@ function startQualityMonitor(): void {
   void updateQuality();
 }
 
+async function applyAdaptiveAudio(score = 100): Promise<void> {
+  const profile = roomModeProfile(roomMode);
+  const policy = qualityPolicy(score, profile);
+  const now = Date.now();
+  const restoring = policy.maxAudioBitrate > activeAudioBitrate;
+  const canApply = now - lastAudioProfileAt >= ADAPTIVE_AUDIO_COOLDOWN_MS || policy.maxAudioBitrate < activeAudioBitrate;
+  if (!mesh || policy.maxAudioBitrate === activeAudioBitrate || !canApply) {
+    updateOptimizingStatus(policy.optimizing);
+    return;
+  }
+
+  const nextBitrate = restoring
+    ? Math.min(policy.maxAudioBitrate, activeAudioBitrate + 4_000)
+    : policy.maxAudioBitrate;
+  activeAudioBitrate = nextBitrate;
+  lastAudioProfileAt = now;
+  await mesh.applyAudioProfile({ maxBitrate: nextBitrate });
+  updateOptimizingStatus(policy.optimizing);
+  gaga.emit('gaga:voice.audio.optimized', {
+    roomId,
+    participantId,
+    roomMode,
+    quality: policy.quality,
+    score: policy.score,
+    maxAudioBitrate: nextBitrate,
+    restoring,
+    shouldRecover: policy.shouldRecover
+  });
+  logClientEvent('webrtc.audio_optimized', {
+    roomId,
+    participantId,
+    roomMode,
+    quality: policy.quality,
+    score: policy.score,
+    maxAudioBitrate: nextBitrate,
+    restoring,
+    shouldRecover: policy.shouldRecover
+  });
+}
+
 async function updateQuality(): Promise<void> {
   const peerQuality = (await mesh?.getPeerQualityMetrics()) ?? [];
   const quality = qualityFromPeerMetrics(peerQuality);
+  const score = peerQuality.length > 0 ? worstQualityScore(peerQuality) : 100;
   const aggregate = aggregatePeerQuality(peerQuality);
+  const profile = roomModeProfile(roomMode);
+  for (const metric of peerQuality) {
+    const peerScore = scoreConnectionQuality(metric);
+    const peerQualityLabel = qualityFromScore(peerScore);
+    const previousQuality = peerQualityState.get(metric.peerId);
+    peerQualityState.set(metric.peerId, peerQualityLabel);
+    const participant = participants.get(metric.peerId);
+    if (participant) {
+      participant.connectionQuality = peerQualityLabel;
+      if (peerQualityLabel === 'poor') applyPresenceToParticipant(participant, 'poor-connection');
+      participants.set(metric.peerId, participant);
+    }
+    if (previousQuality !== peerQualityLabel) {
+      gaga.emit('gaga:voice.quality.changed', {
+        roomId,
+        participantId: metric.peerId,
+        quality: peerQualityLabel,
+        score: peerScore
+      });
+    }
+    if (peerQualityLabel === 'poor' && metric.iceState !== 'connected' && metric.iceState !== 'completed') {
+      schedulePeerRecovery(metric.peerId, profile.recoveryDelayMs.poor, 'poor');
+    }
+  }
   qualityLabel.dataset.quality = quality;
   qualityLabel.textContent = qualityText(quality);
+  await applyAdaptiveAudio(score);
   gaga.emit('gaga:webrtc-quality-sample', {
     quality,
+    score,
     ...aggregate,
     participantCount: participants.size,
     roomDurationMs: roomDurationMs(),
@@ -744,12 +996,14 @@ async function updateQuality(): Promise<void> {
   });
   logClientEvent('webrtc.quality_sample', {
     quality,
+    score,
     ...aggregate,
     participantCount: participants.size,
     roomDurationMs: roomDurationMs(),
     reconnectCount: roomMetrics.reconnectCount
   });
   renderDiagnostics(quality, peerQuality, aggregate);
+  render();
 }
 
 function qualityText(quality: ConnectionQuality): string {
@@ -771,9 +1025,23 @@ function setConnectionStatus(state: string): void {
   statusLabel.textContent = t(key);
 }
 
+function updateOptimizingStatus(active: boolean): void {
+  optimizingLabel.textContent = t('optimizingAudio');
+  optimizingLabel.hidden = !active;
+}
+
+function showSoftStatus(message: string): void {
+  optimizingLabel.textContent = message;
+  optimizingLabel.hidden = false;
+  window.setTimeout(() => {
+    if (optimizingLabel.textContent === message) optimizingLabel.hidden = true;
+  }, 2_500);
+}
+
 function render(): void {
   renderControls();
   renderParticipants();
+  renderRoomPulse();
 }
 
 function renderControls(): void {
@@ -790,8 +1058,9 @@ function renderParticipants(): void {
   const sorted = [...participants.values()].sort((a, b) => Number(Boolean(b.isLocal)) - Number(Boolean(a.isLocal)) || a.displayName.localeCompare(b.displayName));
 
   for (const participant of sorted.slice(0, MAX_PARTICIPANTS)) {
+    const presence = participantPresence(participant);
     const item = document.createElement('li');
-    item.className = `gaga-participant-card ${participant.audioState === 'speaking' ? 'gaga-is-speaking' : ''}`;
+    item.className = `gaga-participant-card gaga-presence-${presence} ${presence === 'speaking' ? 'gaga-is-speaking' : ''}`;
 
     const avatar = document.createElement('span');
     avatar.className = 'gaga-avatar';
@@ -803,17 +1072,97 @@ function renderParticipants(): void {
     const name = document.createElement('strong');
     name.textContent = participant.isLocal ? `${participant.displayName} (${t('you')})` : participant.displayName;
     const state = document.createElement('small');
-    state.textContent = participant.audioState === 'muted' ? t('muted') : participant.audioState === 'speaking' ? t('speaking') : t('listening');
+    state.textContent = presenceText(presence);
     identity.append(name, state);
 
     const badge = document.createElement('span');
-    badge.className = `gaga-audio-badge gaga-is-${participant.audioState}`;
-    badge.textContent = participant.audioState === 'muted' ? '●' : participant.audioState === 'speaking' ? '◉' : '○';
+    badge.className = `gaga-audio-badge gaga-is-${presence}`;
+    badge.textContent = presenceGlyph(presence);
     badge.setAttribute('aria-label', state.textContent);
 
     item.append(avatar, identity, badge);
+    if (!participant.isLocal && participant.connectionState !== 'closed') {
+      item.append(remoteParticipantControls(participant.id));
+    }
     participantList.append(item);
   }
+}
+
+function remoteParticipantControls(peerId: string): HTMLElement {
+  const controls = document.createElement('div');
+  controls.className = 'gaga-participant-controls';
+
+  const volume = document.createElement('input');
+  volume.type = 'range';
+  volume.min = '0';
+  volume.max = '100';
+  volume.step = '5';
+  volume.value = String(Math.round((remoteVolumes.get(peerId) ?? 1) * 100));
+  volume.setAttribute('aria-label', t('volume'));
+  volume.addEventListener('input', () => {
+    remoteVolumes.set(peerId, Number(volume.value) / 100);
+    applyRemoteAudioPreferences(peerId);
+  });
+
+  const focus = document.createElement('button');
+  focus.type = 'button';
+  focus.className = 'gaga-mini-button';
+  focus.textContent = focusedPeerId === peerId ? t('unfocus') : t('focus');
+  focus.addEventListener('click', () => {
+    focusedPeerId = focusedPeerId === peerId ? undefined : peerId;
+    applyRemoteAudioPreferences();
+    renderParticipants();
+  });
+
+  const localMute = document.createElement('button');
+  localMute.type = 'button';
+  localMute.className = 'gaga-mini-button';
+  localMute.textContent = localMutedPeers.has(peerId) ? t('unmute') : t('mute');
+  localMute.addEventListener('click', () => {
+    if (localMutedPeers.has(peerId)) localMutedPeers.delete(peerId);
+    else localMutedPeers.add(peerId);
+    applyRemoteAudioPreferences(peerId);
+    renderParticipants();
+  });
+
+  controls.append(volume, focus, localMute);
+  return controls;
+}
+
+function renderRoomPulse(): void {
+  const visibleParticipants = [...participants.values()].filter((participant) => participant.connectionState !== 'closed' || participant.audioState === 'left');
+  const snapshot = roomPulse(visibleParticipants, roomMode, {
+    lastSpeakingAt,
+    overlapCount
+  });
+  if (snapshot.speakingCount > 0) lastSpeakingAt = Date.now();
+  const overlapping = snapshot.speakingCount > 1;
+  if (overlapping && !wasOverlapping) overlapCount += 1;
+  wasOverlapping = overlapping;
+  pulseLabel.textContent = snapshot.pulse === 'quiet'
+    ? t('pulseQuiet')
+    : snapshot.speakingCount > 1
+      ? `${snapshot.speakingCount} ${t('peopleSpeaking')}`
+      : t('pulseActive');
+}
+
+function presenceText(presence: AdaptivePresence): string {
+  if (presence === 'speaking') return t('speaking');
+  if (presence === 'muted') return t('muted');
+  if (presence === 'joining') return t('joiningState');
+  if (presence === 'reconnecting') return t('reconnecting');
+  if (presence === 'offline' || presence === 'poor-connection') return t('poorConnection');
+  if (presence === 'left') return t('left');
+  return t('listening');
+}
+
+function presenceGlyph(presence: AdaptivePresence): string {
+  if (presence === 'speaking') return '◉';
+  if (presence === 'muted') return '●';
+  if (presence === 'reconnecting' || presence === 'joining') return '↻';
+  if (presence === 'poor-connection' || presence === 'offline') return '!';
+  if (presence === 'left') return '×';
+  return '○';
 }
 
 function renderStaticText(): void {

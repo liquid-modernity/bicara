@@ -17,11 +17,23 @@ export const GAGA_ENGINE_VERSION = '0.1.6' as const;
 export const LIVE_VOICE_CAPABILITY_ID = 'gaga.capability.live-voice.rooms' as const;
 
 export type LiveVoiceMode = 'open-mic' | 'push-to-talk';
+export type LiveVoiceRoomMode = 'open' | 'workshop' | 'learning' | 'gaming';
 
 export interface LiveVoiceGagaConfig {
   defaultRoom: string;
   maxParticipants: number;
   supportedModes: readonly LiveVoiceMode[];
+  supportedRoomModes?: readonly LiveVoiceRoomMode[];
+}
+
+export interface BrowserVoiceCapabilities {
+  microphone: boolean;
+  echoCancellation: boolean;
+  lowLatency: boolean;
+  mobile: boolean;
+  audioOutputSelection: boolean;
+  peerConnection: boolean;
+  websocket: boolean;
 }
 
 export interface GagaRuntimeOptions {
@@ -36,6 +48,7 @@ export interface GagaRuntimeBoundary {
   readonly applicationId: 'live-voice';
   readonly capability: SerializableCapabilityDescriptor;
   readonly inspection: CapabilityInspection;
+  readonly browser: BrowserVoiceCapabilities;
 }
 
 export interface LiveVoiceGagaRuntime {
@@ -47,7 +60,7 @@ export interface LiveVoiceGagaRuntime {
 
 const liveVoiceCapability = defineCapability<LiveVoiceGagaConfig>({
   id: LIVE_VOICE_CAPABILITY_ID,
-  version: '0.0.8',
+  version: '1.0.0',
   executionContext: 'BROWSER',
   stability: 'PUBLIC_EXPERIMENTAL',
   publicEntrypoint: '@live-voice/gaga-bridge',
@@ -74,6 +87,9 @@ const liveVoiceCapability = defineCapability<LiveVoiceGagaConfig>({
     if (!Array.isArray(value.supportedModes) || !value.supportedModes.every(isLiveVoiceMode)) {
       return { ok: false, reason: 'supportedModes must contain only supported Live Voice modes.' };
     }
+    if (value.supportedRoomModes !== undefined && (!Array.isArray(value.supportedRoomModes) || !value.supportedRoomModes.every(isLiveVoiceRoomMode))) {
+      return { ok: false, reason: 'supportedRoomModes must contain only supported Live Voice room modes.' };
+    }
     return { ok: true, value: value as unknown as LiveVoiceGagaConfig };
   }
 });
@@ -95,12 +111,14 @@ export function initializeGagaRuntime(options: GagaRuntimeOptions): LiveVoiceGag
     availableDependencies: availableBrowserDependencies(),
     config: options.config
   });
+  const browser = detectBrowserCapabilities();
 
   const boundary: GagaRuntimeBoundary = Object.freeze({
     version: GAGA_ENGINE_VERSION,
     applicationId: options.applicationId,
     capability: serializeCapabilityDescriptor(liveVoiceCapability),
-    inspection
+    inspection,
+    browser
   });
 
   runtime = Object.freeze({
@@ -129,7 +147,11 @@ export function initializeGagaRuntime(options: GagaRuntimeOptions): LiveVoiceGag
     applicationId: boundary.applicationId,
     capability: boundary.capability.id,
     capabilityAvailable: boundary.inspection.availability.available,
-    engineVersion: boundary.version
+    engineVersion: boundary.version,
+    microphone: browser.microphone,
+    echoCancellation: browser.echoCancellation,
+    lowLatency: browser.lowLatency,
+    mobile: browser.mobile
   });
 
   return runtime;
@@ -137,6 +159,37 @@ export function initializeGagaRuntime(options: GagaRuntimeOptions): LiveVoiceGag
 
 export function currentGagaRuntime(): LiveVoiceGagaRuntime | undefined {
   return runtime;
+}
+
+export function detectBrowserCapabilities(): BrowserVoiceCapabilities {
+  if (typeof window === 'undefined') {
+    return {
+      microphone: false,
+      echoCancellation: false,
+      lowLatency: false,
+      mobile: false,
+      audioOutputSelection: false,
+      peerConnection: false,
+      websocket: false
+    };
+  }
+
+  const mediaDevices = navigator.mediaDevices;
+  const constraints = typeof mediaDevices?.getSupportedConstraints === 'function'
+    ? mediaDevices.getSupportedConstraints()
+    : {};
+  const connection = navigatorConnection();
+  const effectiveType = connection?.effectiveType ?? '';
+
+  return {
+    microphone: typeof mediaDevices?.getUserMedia === 'function',
+    echoCancellation: constraints.echoCancellation === true,
+    lowLatency: effectiveType === '' || effectiveType === '4g',
+    mobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+    audioOutputSelection: typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype,
+    peerConnection: 'RTCPeerConnection' in window,
+    websocket: 'WebSocket' in window
+  };
 }
 
 function availableBrowserDependencies(): readonly string[] {
@@ -147,6 +200,11 @@ function availableBrowserDependencies(): readonly string[] {
   if ('RTCPeerConnection' in window) dependencies.push('webrtc.peer-connection');
   if (typeof navigator.mediaDevices?.getUserMedia === 'function') dependencies.push('media-devices.microphone');
   return dependencies;
+}
+
+function navigatorConnection(): { effectiveType?: string } | undefined {
+  const nav = navigator as Navigator & { connection?: { effectiveType?: string } };
+  return nav.connection;
 }
 
 function domDiagnosticsSink(eventTarget: EventTarget | undefined): DiagnosticsSink {
@@ -171,6 +229,10 @@ function toDiagnosticEventName(name: `gaga:${string}`): `gaga.${string}` {
 
 function isLiveVoiceMode(value: unknown): value is LiveVoiceMode {
   return value === 'open-mic' || value === 'push-to-talk';
+}
+
+function isLiveVoiceRoomMode(value: unknown): value is LiveVoiceRoomMode {
+  return value === 'open' || value === 'workshop' || value === 'learning' || value === 'gaming';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

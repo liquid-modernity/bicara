@@ -18,6 +18,10 @@ export interface PeerQualityMetrics {
   iceStateDurationsMs: Partial<Record<RTCIceConnectionState, number>>;
 }
 
+export interface AudioTransportProfile {
+  maxBitrate: number;
+}
+
 interface PeerRecord {
   connection: RTCPeerConnection;
   pendingIce: RTCIceCandidateInit[];
@@ -233,6 +237,10 @@ export class MeshPeerManager {
     return snapshots;
   }
 
+  async applyAudioProfile(profile: AudioTransportProfile): Promise<void> {
+    await Promise.all([...this.peers.values()].map(({ connection }) => this.applyAudioProfileToConnection(connection, profile)));
+  }
+
   closeAll(): void {
     this.peers.forEach(({ connection }) => connection.close());
     this.peers.clear();
@@ -276,6 +284,19 @@ export class MeshPeerManager {
     });
 
     return record;
+  }
+
+  private async applyAudioProfileToConnection(connection: RTCPeerConnection, profile: AudioTransportProfile): Promise<void> {
+    const senders = connection.getSenders().filter((sender) => sender.track?.kind === 'audio');
+    await Promise.allSettled(senders.map(async (sender) => {
+      const parameters = sender.getParameters();
+      parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
+      parameters.encodings = parameters.encodings.map((encoding) => ({
+        ...encoding,
+        maxBitrate: profile.maxBitrate
+      }));
+      await sender.setParameters(parameters);
+    }));
   }
 
   private recordIceState(peer: PeerRecord, nextState: RTCIceConnectionState): void {

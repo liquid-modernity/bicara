@@ -35,7 +35,7 @@ export default {
       }
 
       if (url.pathname === '/health') {
-        return Response.json({ ok: true, service: 'live-voice-signaling', version: '0.0.8' }, { headers: cors });
+        return Response.json({ ok: true, service: 'live-voice-signaling', version: '1.0.0' }, { headers: cors });
       }
 
       if (url.pathname === '/turn') {

@@ -7,7 +7,15 @@ export type ConnectionState =
   | 'failed'
   | 'closed';
 
-export type AudioState = 'muted' | 'listening' | 'speaking';
+export type AudioState =
+  | 'muted'
+  | 'listening'
+  | 'speaking'
+  | 'joining'
+  | 'reconnecting'
+  | 'offline'
+  | 'left'
+  | 'poor-connection';
 export type VoiceMode = 'open-mic' | 'push-to-talk';
 export type ConnectionQuality = 'unknown' | 'good' | 'fair' | 'poor';
 

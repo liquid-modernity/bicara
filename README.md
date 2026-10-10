@@ -1,4 +1,4 @@
-# Live Voice v0.0.8
+# Live Voice v1.0.0
 
 Guest-first browser-native realtime voice rooms built from the supplied Live Voice PRD, TAD, UX, API, repository, and milestone materials.
 
@@ -121,16 +121,20 @@ The `/turn` endpoint exchanges the long-lived secret for short-lived ICE credent
 - open microphone and push-to-talk modes
 - mute and unmute
 - participant presence and speaking state
+- adaptive participant states for joining, connected, speaking, listening, muted, reconnecting, poor connection, and left
+- Room Pulse metadata for active speakers, quiet rooms, overlap count, and silence duration
 - WebSocket signaling reconnect with exponential backoff
 - deterministic WebRTC ICE restart after disconnected or failed peer connectivity
 - ICE candidate queueing before remote descriptions
+- browser-native adaptive audio bitrate policy with cooldown and gradual restoration
 - selectable audio output where `setSinkId()` is supported
 - remote audio autoplay recovery button
-- aggregate RTT and packet-loss quality indicator
+- normalized 0-100 connection quality score using RTT, packet loss, jitter, bitrate, and ICE state
+- lightweight room mode foundation for open, workshop, learning, and gaming rooms
 - server-side room capacity enforcement, default 10
 - runtime-neutral signaling protocol shared between browser and Worker
 - GAGA capability inspection for the Live Voice browser-room capability
-- GAGA diagnostics for app lifecycle events
+- GAGA diagnostics for lifecycle, capability, participant, quality, recovery, and adaptive-audio events
 - GAGA browser lifecycle cleanup for long-lived frontend subscriptions
 - bounded server-side validation for SDP and ICE signaling payloads
 - persistent local language, mode, name, and audio-output preferences
